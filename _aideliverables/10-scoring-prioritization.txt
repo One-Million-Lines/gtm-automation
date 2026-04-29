@@ -1,0 +1,617 @@
+10. Scoring & prioritization module
+10.1 Purpose
+
+Rank companies and contacts so the system knows:
+
+Who should be contacted first?
+Who needs more data?
+Who should be rejected?
+Who is ready for outreach?
+
+This module turns raw enrichment + signals + contact quality into a clear lead priority.
+
+10.2 Main output
+
+Writes to:
+
+lead_candidates
+
+Main fields updated:
+
+icp_fit_score
+signal_score
+persona_fit_score
+data_quality_score
+final_score
+lead_status
+ready_for_outreach
+qualification_summary
+rejection_reason
+10.3 Input
+
+Reads from:
+
+projects
+icps
+companies
+company_enrichment
+contacts
+contact_enrichment
+signals
+signal_evidence
+suppression_list
+campaign_events
+knowledge_items
+email_drafts
+10.4 Core scoring model
+
+Use 5 components:
+
+1. ICP fit score
+2. Signal score
+3. Persona fit score
+4. Data quality score
+5. Freshness score
+
+Suggested weighting:
+
+final_score =
+  30% ICP fit
+  25% signal score
+  20% persona fit
+  15% data quality
+  10% freshness
+
+Formula:
+
+final_score = (
+    icp_fit_score * 0.30 +
+    signal_score * 0.25 +
+    persona_fit_score * 0.20 +
+    data_quality_score * 0.15 +
+    freshness_score * 0.10
+)
+
+All scores should be normalized to:
+
+0–100
+10.5 Lead status rules
+
+After scoring, assign one of these:
+
+ready
+qualified
+needs_review
+needs_contact_enrichment
+needs_signal
+rejected
+suppressed
+10.6 Readiness thresholds
+
+Recommended rules:
+
+final_score >= 75 → ready, if draft + valid email exist
+final_score >= 65 → qualified
+final_score 45–64 → needs_review
+final_score < 45 → rejected
+
+But ready_for_outreach = 1 only if:
+
+company has domain
+company is not suppressed
+contact exists
+contact email is valid or acceptable
+persona fit score >= 60
+signal score >= 40
+final_score >= 75
+email draft exists
+draft quality passed
+
+If draft is not generated yet:
+
+lead_status = qualified
+ready_for_outreach = 0
+10.7 ICP fit score
+
+Answers:
+
+Does this company match the ICP?
+
+Inputs:
+
+industry
+geography
+company size
+business model
+tech stack
+exclusions
+company description
+
+Example scoring:
+
+target industry match: +30
+target geography match: +20
+company size match: +15
+business model match: +20
+tech stack match: +10
+not excluded: +5
+
+Example:
+
+DTC fashion ecommerce in US using Shopify
+→ 90+
+
+Bad fit:
+
+agency, enterprise, irrelevant industry
+→ 0–40
+10.8 Signal score
+
+Answers:
+
+Is there a strong reason to reach out now?
+
+Use the canonical signals + evidence.
+
+Signal weights:
+
+manual_signal: 40
+pain_signal: 35
+hiring_intent: 30
+competitor_usage: 25
+contact_activity: 20
+growth_signal: 15
+tech_stack: 10
+website_intent: 10
+content_signal: 8
+
+Effective signal score:
+
+effective_score = signal_strength * signal_confidence * signal_weight
+
+Then add multi-source boost:
+
+1 source → no boost
+2 sources → +10%
+3 sources → +20%
+4+ sources → +30%
+
+Cap final signal score at:
+
+100
+10.9 Persona fit score
+
+Answers:
+
+Is this the right person?
+
+Inputs:
+
+job title
+normalized role
+persona priority from ICP
+seniority
+department
+source confidence
+
+Example role priority:
+
+priority 1 persona → +50
+priority 2 persona → +40
+priority 3 persona → +30
+
+Other factors:
+
+exact title match: +25
+seniority match: +15
+department match: +10
+LinkedIn source confidence: +10
+
+Example:
+
+Head of CRM for ICP targeting CRM leaders
+→ 90+
+
+Weak match:
+
+Marketing Assistant
+→ 30–50
+10.10 Data quality score
+
+Answers:
+
+Can we actually use this lead safely?
+
+Inputs:
+
+valid email
+LinkedIn URL
+company domain
+source evidence
+contact source
+enrichment confidence
+
+Example:
+
+valid email: +40
+catch_all email: +25
+risky email: +15
+LinkedIn URL: +15
+job title exists: +15
+company domain exists: +15
+source evidence exists: +15
+
+Cap:
+
+100
+
+Email quality should matter heavily.
+
+10.11 Freshness score
+
+Answers:
+
+How recent is the signal/data?
+
+Suggested:
+
+0–14 days: 100
+15–30 days: 80
+31–60 days: 60
+61–90 days: 40
+90+ days: 20
+
+For job-related signals:
+
+0–14 days: 100
+15–30 days: 70
+31+ days: 30
+
+Use the freshest high-confidence signal.
+
+10.12 Suppression override
+
+Before scoring, check suppression.
+
+If suppressed:
+
+lead_status = suppressed
+ready_for_outreach = 0
+final_score = 0
+
+Suppression reasons:
+
+existing customer
+competitor
+unsubscribed
+bounced
+manual blacklist
+invalid domain
+invalid email
+
+Suppression always wins.
+
+10.13 Rejection rules
+
+Reject if:
+
+company clearly outside ICP
+company domain missing
+company suppressed
+contact suppressed
+email invalid
+persona completely irrelevant
+no signal and low ICP fit
+
+Example rejection reasons:
+
+outside_target_industry
+wrong_geography
+invalid_email
+no_relevant_contact
+no_signal
+suppressed_domain
+existing_customer
+10.14 Prioritization tiers
+
+After scoring, assign tiers:
+
+A-tier: 85–100
+B-tier: 70–84
+C-tier: 55–69
+D-tier: below 55
+
+Recommended use:
+
+A-tier → immediate draft generation
+B-tier → draft generation after A-tier
+C-tier → needs review or more enrichment
+D-tier → reject or keep cold
+10.15 Example scoring
+
+Lead:
+
+Company: Shopify DTC skincare brand
+Signal: Uses Klaviyo from website HTML + BuiltWith
+Contact: Head of CRM
+Email: valid
+Signal age: 7 days
+
+Scores:
+
+ICP fit: 90
+Signal score: 82
+Persona fit: 95
+Data quality: 90
+Freshness: 100
+
+Final:
+
+90*0.30 + 82*0.25 + 95*0.20 + 90*0.15 + 100*0.10
+= 90
+
+Status:
+
+qualified or ready, depending on draft status
+10.16 Score explanation
+
+Every score should generate a short explanation.
+
+Example:
+
+High-priority lead because the company matches the DTC ecommerce ICP, appears to use Klaviyo from two sources, and the contact is Head of CRM with a valid email.
+
+Store in:
+
+lead_candidates.qualification_summary
+
+This explanation will later help email draft generation.
+
+10.17 Scoring module structure
+/backend/modules/scoring
+  module.py
+  contracts.py
+  scoring_rules.py
+  icp_fit_scorer.py
+  signal_scorer.py
+  persona_scorer.py
+  data_quality_scorer.py
+  freshness_scorer.py
+  status_resolver.py
+  tests/
+10.18 Main module flow
+1. Load lead candidates
+2. Check suppression
+3. Calculate ICP fit score
+4. Calculate signal score
+5. Calculate persona fit score
+6. Calculate data quality score
+7. Calculate freshness score
+8. Calculate final score
+9. Assign tier
+10. Assign lead status
+11. Save score breakdown
+12. Save qualification summary
+13. Log results
+10.19 Pseudocode
+class ScoringModule(PipelineModule):
+    name = "scoring"
+
+    def run(self, context):
+        leads = lead_repo.get_for_scoring(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 200)
+        )
+
+        scored = 0
+        failed = 0
+
+        for lead in leads:
+            try:
+                if suppression_service.is_lead_suppressed(lead.id):
+                    lead_repo.mark_suppressed(lead.id)
+                    continue
+
+                icp_score = icp_fit_scorer.score(lead)
+                signal_score = signal_scorer.score(lead)
+                persona_score = persona_scorer.score(lead)
+                data_score = data_quality_scorer.score(lead)
+                freshness_score = freshness_scorer.score(lead)
+
+                final_score = (
+                    icp_score * 0.30 +
+                    signal_score * 0.25 +
+                    persona_score * 0.20 +
+                    data_score * 0.15 +
+                    freshness_score * 0.10
+                )
+
+                status = status_resolver.resolve(
+                    lead=lead,
+                    final_score=final_score,
+                    signal_score=signal_score,
+                    persona_score=persona_score,
+                    data_quality_score=data_score
+                )
+
+                summary = build_qualification_summary(
+                    lead=lead,
+                    scores={
+                        "icp": icp_score,
+                        "signal": signal_score,
+                        "persona": persona_score,
+                        "data": data_score,
+                        "freshness": freshness_score,
+                        "final": final_score
+                    }
+                )
+
+                lead_repo.update_scores(
+                    lead_id=lead.id,
+                    icp_fit_score=icp_score,
+                    signal_score=signal_score,
+                    persona_fit_score=persona_score,
+                    data_quality_score=data_score,
+                    final_score=final_score,
+                    lead_status=status,
+                    qualification_summary=summary
+                )
+
+                scored += 1
+
+            except Exception as e:
+                failed += 1
+                log_error(e, lead.id)
+
+        return ModuleResult(
+            success=True,
+            input_count=len(leads),
+            output_count=scored,
+            failed_count=failed
+        )
+10.20 Status resolver
+
+Example logic:
+
+def resolve_status(lead, final_score, signal_score, persona_score, data_quality_score):
+    if lead.is_suppressed:
+        return "suppressed"
+
+    if data_quality_score < 30:
+        return "needs_contact_enrichment"
+
+    if persona_score < 40:
+        return "rejected"
+
+    if signal_score < 30:
+        return "needs_signal"
+
+    if final_score >= 75:
+        return "qualified"
+
+    if final_score >= 55:
+        return "needs_review"
+
+    return "rejected"
+
+Readiness should be checked after draft generation and quality control.
+
+10.21 Config example
+{
+  "scoring": {
+    "enabled": true,
+    "limit": 200,
+    "weights": {
+      "icp_fit": 0.30,
+      "signal": 0.25,
+      "persona": 0.20,
+      "data_quality": 0.15,
+      "freshness": 0.10
+    },
+    "thresholds": {
+      "ready": 75,
+      "qualified": 65,
+      "needs_review": 55,
+      "reject": 45
+    },
+    "allow_catch_all_email": true,
+    "allow_risky_email": false,
+    "minimum_signal_score": 30,
+    "minimum_persona_score": 40
+  }
+}
+10.22 API endpoints
+Run scoring
+POST /api/scoring/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 200
+}
+Get prioritized leads
+GET /api/leads?sort=final_score&status=qualified
+Get A-tier leads
+GET /api/leads?tier=A
+Recalculate one lead
+POST /api/leads/{lead_candidate_id}/score
+10.23 Frontend screen
+Lead prioritization table
+
+Columns:
+
+Company
+Contact
+Role
+Email status
+Top signal
+ICP fit
+Signal score
+Persona fit
+Data quality
+Final score
+Tier
+Status
+
+Actions:
+
+view explanation
+approve
+reject
+send to draft generation
+suppress
+10.24 MVP build order
+Step 1
+
+Build scoring service with hardcoded weights.
+
+Step 2
+
+Build ICP fit scorer.
+
+Step 3
+
+Build persona fit scorer.
+
+Step 4
+
+Build data quality scorer.
+
+Step 5
+
+Build signal scorer using signals + signal_evidence.
+
+Step 6
+
+Build final score calculator.
+
+Step 7
+
+Build status resolver.
+
+Step 8
+
+Add score explanation.
+
+Step 9
+
+Add UI table sorted by score.
+
+10.25 Definition of done
+
+This module is complete when:
+
+Every lead candidate gets a score breakdown
+Suppressed leads are excluded
+ICP fit is scored
+Signals are scored with multi-source evidence
+Persona fit is scored
+Data quality is scored
+Freshness is scored
+Final score is calculated
+Lead status is updated
+Leads are prioritized into tiers
+A human can understand why a lead is high or low priority

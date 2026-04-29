@@ -1,0 +1,917 @@
+9. Signal extraction module
+9.1 Purpose
+
+Detect and store why a company/contact is worth contacting now.
+
+This module turns raw data into outreach intelligence.
+
+Example:
+
+Company uses Klaviyo
+Company is hiring a CRM manager
+Company recently migrated to Shopify Plus
+Contact posted about email automation
+Company has poor reviews about marketing tools
+
+A lead without a signal is just a cold contact.
+A lead with a verified signal becomes a reason-based outreach opportunity.
+
+9.2 Main requirement
+
+The module must support multiple sources for the same signal.
+
+Example:
+
+Signal: Uses Klaviyo
+
+Source 1: BuiltWith detected Klaviyo
+Source 2: Website HTML contains klaviyo.com
+Source 3: Job post says “experience with Klaviyo required”
+Source 4: Case study mentions Klaviyo
+
+The system should not create 4 separate weak signals only.
+It should create:
+
+1 canonical signal
++ multiple supporting sources/evidence records
+9.3 Core concept
+
+Separate:
+
+Signal
+
+from:
+
+Signal Evidence
+
+Recommended new table:
+
+CREATE TABLE signal_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    signal_id INTEGER NOT NULL,
+
+    source_type TEXT NOT NULL,
+    source_name TEXT,
+    source_url TEXT,
+
+    evidence_text TEXT,
+    raw_data TEXT,
+
+    confidence_score REAL,
+    extracted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (signal_id) REFERENCES signals(id)
+);
+
+Why this matters:
+
+signals = the claim
+signal_evidence = proof supporting the claim
+9.4 Updated signal model
+
+Current signals table should represent the canonical signal.
+
+CREATE TABLE signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    company_id INTEGER,
+    contact_id INTEGER,
+    icp_id INTEGER,
+
+    signal_type TEXT NOT NULL,
+    signal_name TEXT NOT NULL,
+
+    description TEXT,
+
+    strength_score REAL,
+    confidence_score REAL,
+
+    status TEXT DEFAULT 'active',
+
+    first_detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    detected_by TEXT,
+    raw_data TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (company_id) REFERENCES companies(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+You can keep source_url and extracted_text for MVP, but better to move them into signal_evidence.
+
+9.5 Example
+Canonical signal
+{
+  "signal_type": "competitor_usage",
+  "signal_name": "Uses Klaviyo",
+  "company_id": 12,
+  "contact_id": null,
+  "strength_score": 0.85,
+  "confidence_score": 0.93
+}
+Evidence records
+[
+  {
+    "source_type": "website_html",
+    "source_url": "https://brand.com",
+    "evidence_text": "script src contains klaviyo.com",
+    "confidence_score": 0.9
+  },
+  {
+    "source_type": "builtwith",
+    "source_url": "https://builtwith.com/brand.com",
+    "evidence_text": "Klaviyo detected as marketing automation technology",
+    "confidence_score": 0.95
+  },
+  {
+    "source_type": "job_post",
+    "source_url": "https://brand.com/careers/crm-manager",
+    "evidence_text": "Experience with Klaviyo required",
+    "confidence_score": 0.85
+  }
+]
+9.6 Input
+
+Reads from:
+
+companies
+company_enrichment
+contacts
+contact_enrichment
+company_sources
+contact_sources
+icps
+knowledge_items
+campaign_events
+external providers
+
+Important:
+
+Signal extraction should not depend on one source.
+
+It should be able to extract signals from:
+
+website text
+website HTML
+tech stack enrichment
+job posts
+reviews
+news
+LinkedIn posts
+contact profiles
+manual notes
+campaign replies
+uploaded files
+9.7 Output
+
+Writes to:
+
+signals
+signal_evidence
+lead_candidates
+module_logs
+
+Updates:
+
+lead_candidates.signal_score
+lead_candidates.qualification_summary maybe later
+9.8 Signal types
+
+Start with these:
+
+competitor_usage
+tech_stack
+hiring_intent
+growth_signal
+funding_signal
+pain_signal
+review_complaint
+website_intent
+content_signal
+contact_activity
+manual_signal
+campaign_feedback_signal
+9.9 Signal examples
+Competitor usage
+Uses Klaviyo
+Uses Omnisend
+Uses Mailchimp
+Uses HubSpot
+Uses Customer.io
+Hiring intent
+Hiring CRM Manager
+Hiring Lifecycle Marketing Manager
+Hiring Email Marketing Manager
+Hiring Growth Lead
+Tech stack
+Uses Shopify
+Uses Shopify Plus
+Uses WooCommerce
+Uses Magento
+Uses Recharge
+Uses Gorgias
+Pain signal
+Mentions manual email workflows
+Mentions poor segmentation
+Mentions migration from another tool
+Mentions deliverability issues
+Mentions high costs
+Growth signal
+Opening new market
+Hiring marketing team
+Recently funded
+High ad activity
+Launching new products
+Contact activity
+Contact posted about retention
+Contact changed role recently
+Contact hiring for CRM team
+Contact mentioned email automation
+9.10 Signal source types
+
+Support multiple source types from day one.
+
+website_html
+website_text
+company_enrichment
+tech_stack_provider
+builtwith
+wappalyzer
+job_board
+company_careers_page
+linkedin_company
+linkedin_contact
+news
+review_site
+g2
+capterra
+reddit
+manual_note
+campaign_reply
+call_transcript
+uploaded_csv
+9.11 Source provider architecture
+
+Use signal providers.
+
+class SignalProvider:
+    name: str
+    source_type: str
+
+    def extract(self, company, contact, icp, context) -> list[dict]:
+        pass
+
+Example providers:
+
+WebsiteSignalProvider
+TechStackSignalProvider
+JobPostSignalProvider
+ReviewSignalProvider
+NewsSignalProvider
+LinkedInSignalProvider
+ManualSignalProvider
+CampaignFeedbackSignalProvider
+
+Each provider returns signal candidates.
+
+9.12 Signal candidate structure
+
+Every provider should output the same structure.
+
+{
+  "signal_type": "competitor_usage",
+  "signal_name": "Uses Klaviyo",
+  "description": "Company appears to use Klaviyo for email marketing.",
+  "company_id": 12,
+  "contact_id": null,
+  "source_type": "website_html",
+  "source_name": "Website HTML detector",
+  "source_url": "https://brand.com",
+  "evidence_text": "Homepage HTML contains klaviyo.com script.",
+  "strength_score": 0.8,
+  "confidence_score": 0.9,
+  "raw_data": {}
+}
+9.13 Canonicalization
+
+Different sources may describe the same thing differently.
+
+Examples:
+
+klaviyo
+Klaviyo tracking script
+klaviyo.com
+Klaviyo email platform
+
+All should map to:
+
+signal_type = competitor_usage
+signal_name = Uses Klaviyo
+
+Create a signal canonicalizer.
+
+class SignalCanonicalizer:
+    def canonicalize(self, candidate: dict) -> dict:
+        pass
+
+Example mapping:
+
+COMPETITOR_SIGNAL_MAP = {
+    "klaviyo": "Uses Klaviyo",
+    "klaviyo.com": "Uses Klaviyo",
+    "klaviyo tracking": "Uses Klaviyo",
+    "omnisend": "Uses Omnisend",
+    "mailchimp": "Uses Mailchimp"
+}
+9.14 Signal deduplication
+
+Deduplicate by:
+
+company_id
+contact_id
+icp_id
+signal_type
+canonical signal_name
+
+If signal exists:
+
+update last_detected_at
+recalculate confidence
+add new signal_evidence
+
+If signal does not exist:
+
+create signal
+create signal_evidence
+
+Recommended unique index:
+
+CREATE UNIQUE INDEX idx_unique_signal
+ON signals(company_id, contact_id, icp_id, signal_type, signal_name);
+
+Note: SQLite treats NULLs as distinct, so handle contact_id carefully in code.
+
+9.15 Evidence deduplication
+
+Avoid duplicate evidence rows.
+
+Deduplicate by:
+
+signal_id
+source_type
+source_url
+evidence_text hash
+
+Add:
+
+ALTER TABLE signal_evidence ADD COLUMN evidence_hash TEXT;
+CREATE INDEX idx_signal_evidence_hash ON signal_evidence(evidence_hash);
+
+Generate hash:
+
+hash(source_type + source_url + normalized_evidence_text)
+9.16 Confidence aggregation
+
+When multiple sources support the same signal, confidence should increase.
+
+Simple formula:
+
+confidence = 1 - product(1 - evidence_confidence)
+
+Example:
+
+Evidence 1 confidence: 0.8
+Evidence 2 confidence: 0.7
+
+Combined:
+1 - (1 - 0.8) * (1 - 0.7)
+= 0.94
+
+Cap at:
+
+0.98
+
+This prevents fake certainty.
+
+9.17 Strength vs confidence
+
+Keep these separate.
+
+Confidence
+How sure are we this signal is true?
+
+Example:
+
+BuiltWith says Klaviyo detected → high confidence
+Random blog mention → medium confidence
+Strength
+How useful is this signal for outreach?
+
+Example:
+
+Uses Klaviyo → useful
+Hiring Head of CRM → very useful
+Mentions marketing on website → weak
+
+A signal can be:
+
+high confidence, low strength
+
+Example:
+
+Company has Google Analytics
+
+or:
+
+medium confidence, high strength
+
+Example:
+
+Review complains about Klaviyo pricing
+9.18 Signal score per lead
+
+For each lead candidate:
+
+signal_score = weighted sum of relevant signals
+
+Example weights:
+
+competitor_usage: 25
+hiring_intent: 30
+pain_signal: 35
+growth_signal: 15
+tech_stack: 10
+contact_activity: 20
+manual_signal: 40
+
+Then apply confidence:
+
+effective_signal_score = strength_score * confidence_score * weight
+
+Normalize to:
+
+0–100
+9.19 Multi-source score boost
+
+Give extra weight for corroboration.
+
+Example:
+
+1 source → no boost
+2 sources → +10%
+3 sources → +20%
+4+ sources → +30%
+
+But cap final signal contribution.
+
+Reason:
+
+A signal confirmed by website + tech stack + job post is stronger than one source alone.
+9.20 Source reliability weights
+
+Not all sources are equal.
+
+Example:
+
+manual_note: 1.0
+builtwith: 0.95
+website_html: 0.9
+company_careers_page: 0.9
+job_board: 0.85
+linkedin_company: 0.8
+news: 0.75
+review_site: 0.7
+reddit: 0.5
+ai_inference_only: 0.4
+
+Final evidence confidence:
+
+provider_confidence * source_reliability
+9.21 Provider examples
+Website HTML Signal Provider
+
+Detects tools and scripts.
+
+Input:
+
+company website HTML
+ICP competitors
+
+Extracts:
+
+Klaviyo
+Shopify
+Omnisend
+HubSpot
+Meta Pixel
+Gorgias
+Recharge
+
+Output:
+
+competitor_usage
+tech_stack
+Website Text Signal Provider
+
+Uses cleaned website text.
+
+Extracts phrases like:
+
+email marketing
+automation
+personalization
+retention
+loyalty
+customer experience
+
+Output:
+
+website_intent
+pain_signal
+content_signal
+Job Post Signal Provider
+
+Finds hiring intent.
+
+Searches:
+
+company careers page
+job boards
+LinkedIn jobs via Apify
+
+Extracts:
+
+hiring CRM Manager
+requires Klaviyo experience
+hiring lifecycle marketing
+building retention team
+
+Output:
+
+hiring_intent
+competitor_usage
+growth_signal
+Review Signal Provider
+
+Sources:
+
+G2
+Capterra
+Trustpilot
+Google reviews
+Reddit
+
+Extracts:
+
+complaints about current tool
+pricing issues
+deliverability issues
+automation limitations
+support complaints
+
+Output:
+
+review_complaint
+pain_signal
+competitor_displacement
+Contact Activity Provider
+
+Sources:
+
+LinkedIn posts
+bio/about sections
+public interviews
+podcasts
+
+Extracts:
+
+talks about retention
+mentions automation
+recently joined company
+hiring team
+owns CRM/lifecycle
+
+Output:
+
+contact_activity
+persona_fit
+pain_signal
+Campaign Feedback Provider
+
+Sources:
+
+previous replies
+calls
+demo transcripts
+manual notes
+
+Extracts:
+
+positive replies from this segment
+objections
+competitor mentions
+language used by prospects
+
+Output:
+
+campaign_feedback_signal
+messaging_signal
+icp_refinement_signal
+9.22 LLM-based extraction prompt
+
+Use AI for messy text sources.
+
+Prompt:
+
+You extract B2B outreach signals from source text.
+
+Given:
+- ICP definition
+- company profile
+- contact profile if available
+- source text
+- allowed signal types
+
+Return JSON only:
+{
+  "signals": [
+    {
+      "signal_type": "",
+      "signal_name": "",
+      "description": "",
+      "evidence_text": "",
+      "strength_score": 0.0,
+      "confidence_score": 0.0
+    }
+  ]
+}
+
+Rules:
+- Use only the provided source text.
+- Do not invent facts.
+- Every signal must include exact evidence_text.
+- If evidence is weak, lower confidence.
+- If no signal exists, return {"signals": []}.
+- Keep signal_name short and canonical.
+9.23 Signal quality rules
+
+Reject signals if:
+
+no evidence text
+no source type
+no company_id and no contact_id
+confidence_score < 0.4
+signal is generic
+signal is not relevant to ICP
+
+Weak examples to reject:
+
+Company has a website
+Company uses Google Analytics
+Company posts on LinkedIn
+Company sells products
+
+Useful examples:
+
+Company uses Klaviyo
+Company is hiring CRM Manager
+Company mentions retention marketing
+Contact owns lifecycle marketing
+Company complains about high email platform cost
+9.24 Manual signal support
+
+You should support manual signals from day one.
+
+Example UI:
+
+Add signal manually
+
+Fields:
+
+company
+contact optional
+signal type
+signal name
+description
+source URL optional
+evidence text
+strength
+confidence
+
+Manual signals are useful when you personally know something the scraper cannot find.
+
+9.25 Signal lifecycle
+
+Statuses:
+
+active
+stale
+rejected
+needs_review
+
+Set to stale if:
+
+not confirmed again after X days
+
+Suggested freshness:
+
+tech stack: 60–90 days
+job post: 30 days
+news: 30–60 days
+review complaint: 90 days
+manual note: no expiry unless configured
+9.26 Freshness scoring
+
+Add freshness decay.
+
+Example:
+
+0–30 days old: 100%
+31–60 days: 75%
+61–90 days: 50%
+90+ days: 25%
+
+For job posts:
+
+0–14 days: 100%
+15–30 days: 70%
+31+ days: stale
+9.27 Module config example
+{
+  "signal_extraction": {
+    "enabled": true,
+    "limit": 100,
+    "min_confidence": 0.4,
+    "providers": {
+      "website_html": {
+        "enabled": true
+      },
+      "website_text": {
+        "enabled": true,
+        "use_ai": true
+      },
+      "tech_stack": {
+        "enabled": true
+      },
+      "job_posts": {
+        "enabled": false,
+        "max_jobs_per_company": 10
+      },
+      "reviews": {
+        "enabled": false
+      },
+      "linkedin_contact": {
+        "enabled": false
+      },
+      "manual": {
+        "enabled": true
+      },
+      "campaign_feedback": {
+        "enabled": true
+      }
+    }
+  }
+}
+9.28 API endpoints
+Run signal extraction
+POST /api/signals/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 100,
+  "providers": ["website_html", "website_text", "tech_stack"]
+}
+Get signals for company
+GET /api/companies/{company_id}/signals
+Get signals for lead
+GET /api/leads/{lead_candidate_id}/signals
+Add manual signal
+POST /api/signals/manual
+Reject signal
+POST /api/signals/{signal_id}/reject
+Get signal evidence
+GET /api/signals/{signal_id}/evidence
+9.29 Frontend screens
+Signals overview
+
+Columns:
+
+Company
+Contact
+Signal
+Type
+Strength
+Confidence
+Sources
+Last detected
+Status
+
+Actions:
+
+view evidence
+approve
+reject
+mark stale
+Signal detail page
+
+Sections:
+
+Canonical signal
+Evidence sources
+Extracted text
+Confidence calculation
+Related company
+Related contact
+Related ICP
+Add manual signal
+
+Fields:
+
+company
+contact optional
+signal type
+signal name
+description
+source URL
+evidence text
+strength
+confidence
+9.30 Build order
+Step 1
+
+Add signal_evidence table.
+
+Step 2
+
+Build signal candidate format.
+
+Step 3
+
+Build signal canonicalizer.
+
+Step 4
+
+Build signal upsert logic.
+
+Step 5
+
+Build evidence deduplication.
+
+Step 6
+
+Build website HTML signal provider.
+
+Step 7
+
+Build tech stack signal provider from existing enrichment.
+
+Step 8
+
+Build website text AI signal provider.
+
+Step 9
+
+Build manual signal UI/API.
+
+Step 10
+
+Add job post/review/LinkedIn providers later.
+
+9.31 MVP version
+
+For MVP, support these sources:
+
+website_html
+company_enrichment
+manual_signal
+uploaded_csv
+
+This is enough to create useful signals like:
+
+uses Klaviyo
+uses Shopify
+mentions email automation
+matches ecommerce ICP
+manual founder insight
+9.32 Definition of done
+
+This module is complete when:
+
+Signals are stored separately from evidence
+One signal can have multiple sources
+Duplicate evidence is avoided
+Confidence increases when sources agree
+Signal strength stays separate from confidence
+Signals are linked to company/contact/ICP
+Signals can be manually added
+Signals can be rejected or marked stale
+Lead signal score can be calculated from signals

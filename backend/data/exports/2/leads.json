@@ -1,0 +1,88 @@
+[
+  {
+    "lead": {
+      "id": 1,
+      "priority_tier": "A",
+      "final_score": 0.95,
+      "lead_status": "qualified",
+      "icp_id": 1,
+      "company_id": 1,
+      "contact_id": 1
+    },
+    "company": {
+      "id": 1,
+      "name": "Acme19",
+      "domain": "acme19.example",
+      "industry": "saas",
+      "country": "Germany",
+      "employee_count": 90
+    },
+    "contact": {
+      "id": 1,
+      "first_name": "Alex",
+      "last_name": "Doe",
+      "full_name": "Alex Doe",
+      "email": "alex@acme19.example",
+      "job_title": "CTO",
+      "linkedin_url": null
+    },
+    "icp": {
+      "id": 1,
+      "name": "ICP-A"
+    },
+    "outreach_message": {
+      "id": 1,
+      "status": "approved",
+      "subject": "Hello Alex",
+      "body": "Body for Alex. w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w",
+      "variant_id": 2,
+      "variant_name": "challenger",
+      "generated_at": "2026-04-29 10:52:37",
+      "approved_at": "2026-01-01T00:00:00",
+      "sent_at": null
+    },
+    "winning_variant": {
+      "id": 2,
+      "name": "challenger",
+      "experiment_id": 1,
+      "experiment_name": "Exp1",
+      "is_control": 0
+    },
+    "is_winning_variant": true
+  },
+  {
+    "lead": {
+      "id": 3,
+      "priority_tier": "A",
+      "final_score": 0.91,
+      "lead_status": "qualified",
+      "icp_id": 1,
+      "company_id": 1,
+      "contact_id": 3
+    },
+    "company": {
+      "id": 1,
+      "name": "Acme19",
+      "domain": "acme19.example",
+      "industry": "saas",
+      "country": "Germany",
+      "employee_count": 90
+    },
+    "contact": {
+      "id": 3,
+      "first_name": "Cleo",
+      "last_name": "Lin",
+      "full_name": "Cleo Lin",
+      "email": "cleo@acme19.example",
+      "job_title": "CTO",
+      "linkedin_url": null
+    },
+    "icp": {
+      "id": 1,
+      "name": "ICP-A"
+    },
+    "outreach_message": null,
+    "winning_variant": null,
+    "is_winning_variant": false
+  }
+]

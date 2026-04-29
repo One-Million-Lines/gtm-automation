@@ -1,0 +1,666 @@
+11.1 Purpose
+
+Prevent the system from creating or exporting:
+
+duplicate companies
+duplicate contacts
+duplicate lead candidates
+existing customers
+competitors
+unsubscribed contacts
+bounced emails
+already-contacted leads
+manually rejected leads
+
+This module protects outreach quality and avoids embarrassing mistakes.
+
+11.2 Core idea
+
+Separate two concepts:
+
+Deduplication
+This record already exists.
+
+Example:
+
+example.com already exists as a company
+sarah@example.com already exists as a contact
+Suppression
+This record should not be used for outreach.
+
+Example:
+
+competitor domain
+existing customer
+unsubscribed email
+bounced contact
+11.3 Input
+
+Reads from:
+
+companies
+contacts
+lead_candidates
+email_drafts
+campaign_events
+suppression_list
+company_sources
+contact_sources
+11.4 Output
+
+Updates:
+
+companies.status
+contacts.status
+lead_candidates.lead_status
+lead_candidates.ready_for_outreach
+email_drafts.quality_status
+
+Writes to:
+
+suppression_list
+module_logs
+11.5 When this module runs
+
+Run it:
+
+after company discovery
+after contact discovery
+after contact enrichment
+before scoring
+before draft generation
+before export
+after feedback ingestion
+
+In practice:
+
+Run often.
+
+This is a safety module.
+
+11.6 Deduplication levels
+1. Company dedupe
+
+Primary key:
+
+domain
+
+Secondary fallback:
+
+normalized company name + country
+2. Contact dedupe
+
+Primary keys:
+
+email
+linkedin_url
+company_id + normalized full name
+3. Lead candidate dedupe
+
+Primary key:
+
+icp_id + company_id + contact_id
+4. Signal dedupe
+
+Primary key:
+
+company_id + contact_id + icp_id + signal_type + signal_name
+5. Evidence dedupe
+
+Primary key:
+
+signal_id + source_type + source_url + evidence_hash
+6. Email draft dedupe
+
+Primary key:
+
+lead_candidate_id + draft_type + prompt_version
+11.7 Suppression levels
+
+Suppression can happen at:
+
+domain level
+company level
+contact level
+email level
+LinkedIn URL level
+campaign level
+ICP/project level later
+
+MVP suppression table:
+
+CREATE TABLE suppression_list (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    suppression_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+
+    reason TEXT,
+    source TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+Recommended unique index:
+
+CREATE UNIQUE INDEX idx_unique_suppression
+ON suppression_list(suppression_type, value);
+11.8 Suppression types
+domain
+email
+company_name
+linkedin_url
+competitor
+customer
+unsubscribed
+bounced
+manual_reject
+already_contacted
+
+Examples:
+
+domain: klaviyo.com
+email: john@example.com
+company_name: Existing Customer ABC
+linkedin_url: https://linkedin.com/in/john-example
+11.9 Company deduplication rules
+
+Normalize domain before comparing.
+
+Examples:
+
+https://www.example.com/about → example.com
+http://example.com → example.com
+shop.example.com → example.com
+
+Use:
+
+tldextract
+urllib.parse
+
+Company duplicates:
+
+Example Inc.
+Example LLC
+EXAMPLE GmbH
+Example
+
+Normalize company name:
+
+lowercase
+remove punctuation
+remove legal suffixes
+trim whitespace
+
+Legal suffixes to remove:
+
+inc
+llc
+ltd
+gmbh
+ag
+sa
+srl
+bv
+plc
+corp
+corporation
+company
+co
+11.10 Company merge behavior
+
+If duplicate company is found:
+
+do not create new company
+attach new source to existing company
+merge missing fields only
+keep highest-confidence enrichment
+
+Priority:
+
+manual import > enrichment provider > scraped search result
+11.11 Contact deduplication rules
+
+Normalize email:
+
+lowercase
+trim whitespace
+
+Normalize LinkedIn URL:
+
+remove tracking params
+remove trailing slash
+normalize /in/ profile path
+
+Normalize full name:
+
+lowercase
+remove punctuation
+remove extra spaces
+
+Dedupe priority:
+
+1. email
+2. linkedin_url
+3. company_id + normalized full_name
+11.12 Contact merge behavior
+
+If duplicate contact is found:
+
+do not create new contact
+merge better email status
+merge LinkedIn URL if missing
+merge better job title if higher confidence
+append contact source
+
+Email priority:
+
+valid > catch_all > risky > unknown > not_found > invalid
+11.13 Lead candidate dedupe rules
+
+Avoid:
+
+same ICP + same company + same contact
+
+If contact is null:
+
+same ICP + same company + null contact
+
+MVP implementation should handle this in code because SQLite uniqueness with null can be tricky.
+
+11.14 Suppression rules
+
+Suppress if:
+
+company domain in suppression_list
+company name in suppression_list
+contact email in suppression_list
+contact LinkedIn URL in suppression_list
+contact previously unsubscribed
+contact bounced
+company is existing customer
+company is competitor
+lead already contacted
+manual reject exists
+
+Suppression always overrides score.
+
+11.15 Suppression effects
+
+If company is suppressed:
+
+companies.status = suppressed
+all related lead_candidates.lead_status = suppressed
+all related lead_candidates.ready_for_outreach = 0
+
+If contact is suppressed:
+
+contacts.status = suppressed
+related lead_candidates.lead_status = suppressed
+ready_for_outreach = 0
+
+If email is bounced or unsubscribed:
+
+contacts.email_status = suppressed
+contacts.status = suppressed
+related lead_candidates.lead_status = suppressed
+11.16 Campaign-based suppression
+
+From campaign_events:
+
+Unsubscribe
+event_type = unsubscribed
+→ add email to suppression_list
+Bounce
+event_type = bounced
+→ add email to suppression_list
+Already contacted
+event_type = sent
+→ lead_status = contacted
+
+Depending on config:
+
+do not contact same person again for X days
+do not contact same company again for X days
+11.17 Cooldown suppression
+
+Useful later.
+
+Example:
+
+Do not contact same company within 90 days.
+
+Add optional table later:
+
+CREATE TABLE outreach_cooldowns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    cooldown_until TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+MVP can skip this.
+
+11.18 Manual suppression
+
+Frontend should allow:
+
+Suppress company
+Suppress contact
+Suppress email
+Suppress domain
+Mark as existing customer
+Mark as competitor
+Reject lead
+
+Each action writes to:
+
+suppression_list
+11.19 Import suppression list
+
+Support CSV upload.
+
+Columns:
+
+type
+value
+reason
+source
+
+Example:
+
+type,value,reason,source
+domain,klaviyo.com,competitor,manual
+domain,customer.com,existing customer,crm_export
+email,john@example.com,unsubscribed,instantly
+11.20 Module structure
+/backend/modules/deduplication_suppression
+  module.py
+  contracts.py
+  dedupe_service.py
+  suppression_service.py
+  normalization.py
+  merge_service.py
+  tests/
+11.21 Core services
+Normalization service
+class NormalizationService:
+    def normalize_domain(self, url_or_domain: str) -> str:
+        pass
+
+    def normalize_company_name(self, name: str) -> str:
+        pass
+
+    def normalize_email(self, email: str) -> str:
+        pass
+
+    def normalize_linkedin_url(self, url: str) -> str:
+        pass
+
+    def normalize_person_name(self, name: str) -> str:
+        pass
+Dedupe service
+class DedupeService:
+    def find_duplicate_company(self, company_data):
+        pass
+
+    def merge_company(self, existing_company, new_data):
+        pass
+
+    def find_duplicate_contact(self, contact_data):
+        pass
+
+    def merge_contact(self, existing_contact, new_data):
+        pass
+
+    def find_duplicate_lead_candidate(self, lead_data):
+        pass
+Suppression service
+class SuppressionService:
+    def is_domain_suppressed(self, domain: str) -> bool:
+        pass
+
+    def is_email_suppressed(self, email: str) -> bool:
+        pass
+
+    def is_company_suppressed(self, company) -> bool:
+        pass
+
+    def is_contact_suppressed(self, contact) -> bool:
+        pass
+
+    def is_lead_suppressed(self, lead_candidate_id: int) -> bool:
+        pass
+
+    def suppress_domain(self, domain: str, reason: str, source: str):
+        pass
+
+    def suppress_email(self, email: str, reason: str, source: str):
+        pass
+11.22 Main module flow
+1. Normalize company domains
+2. Merge duplicate companies
+3. Normalize contact emails and LinkedIn URLs
+4. Merge duplicate contacts
+5. Merge duplicate lead candidates
+6. Apply suppression rules
+7. Apply campaign-based suppression
+8. Update statuses
+9. Log results
+11.23 Pseudocode
+class DeduplicationSuppressionModule(PipelineModule):
+    name = "deduplication_suppression"
+
+    def run(self, context):
+        company_merges = self.dedupe_companies(context)
+        contact_merges = self.dedupe_contacts(context)
+        lead_merges = self.dedupe_leads(context)
+
+        suppressed_companies = self.apply_company_suppression(context)
+        suppressed_contacts = self.apply_contact_suppression(context)
+        suppressed_leads = self.apply_lead_suppression(context)
+
+        return ModuleResult(
+            success=True,
+            input_count=company_merges + contact_merges + lead_merges,
+            output_count=suppressed_companies + suppressed_contacts + suppressed_leads,
+            failed_count=0,
+            data={
+                "company_merges": company_merges,
+                "contact_merges": contact_merges,
+                "lead_merges": lead_merges,
+                "suppressed_companies": suppressed_companies,
+                "suppressed_contacts": suppressed_contacts,
+                "suppressed_leads": suppressed_leads
+            }
+        )
+11.24 Company suppression pseudocode
+def apply_company_suppression(context):
+    companies = company_repo.get_active_companies(context.project_id)
+    count = 0
+
+    for company in companies:
+        domain = normalize_domain(company.domain)
+
+        if suppression_service.is_domain_suppressed(domain):
+            company_repo.update_status(company.id, "suppressed")
+            lead_repo.suppress_by_company(company.id)
+            count += 1
+
+    return count
+11.25 Contact suppression pseudocode
+def apply_contact_suppression(context):
+    contacts = contact_repo.get_active_contacts(context.project_id)
+    count = 0
+
+    for contact in contacts:
+        if contact.email and suppression_service.is_email_suppressed(contact.email):
+            contact_repo.update_status(contact.id, "suppressed")
+            lead_repo.suppress_by_contact(contact.id)
+            count += 1
+
+        if contact.linkedin_url and suppression_service.is_linkedin_suppressed(contact.linkedin_url):
+            contact_repo.update_status(contact.id, "suppressed")
+            lead_repo.suppress_by_contact(contact.id)
+            count += 1
+
+    return count
+11.26 Campaign event suppression pseudocode
+def apply_campaign_suppression():
+    events = campaign_event_repo.get_unprocessed_suppression_events()
+
+    for event in events:
+        if event.event_type == "unsubscribed":
+            suppression_service.suppress_email(
+                email=event.contact.email,
+                reason="unsubscribed",
+                source="campaign_event"
+            )
+
+        if event.event_type == "bounced":
+            suppression_service.suppress_email(
+                email=event.contact.email,
+                reason="bounced",
+                source="campaign_event"
+            )
+11.27 Recommended database additions
+
+Add normalized fields for faster dedupe.
+
+ALTER TABLE companies ADD COLUMN normalized_name TEXT;
+ALTER TABLE companies ADD COLUMN normalized_domain TEXT;
+
+ALTER TABLE contacts ADD COLUMN normalized_full_name TEXT;
+ALTER TABLE contacts ADD COLUMN normalized_email TEXT;
+ALTER TABLE contacts ADD COLUMN normalized_linkedin_url TEXT;
+
+Indexes:
+
+CREATE INDEX idx_companies_normalized_domain ON companies(normalized_domain);
+CREATE INDEX idx_companies_normalized_name ON companies(normalized_name);
+CREATE INDEX idx_contacts_normalized_email ON contacts(normalized_email);
+CREATE INDEX idx_contacts_normalized_linkedin ON contacts(normalized_linkedin_url);
+CREATE INDEX idx_contacts_normalized_name_company ON contacts(company_id, normalized_full_name);
+11.28 API endpoints
+Suppress domain
+POST /api/suppression/domain
+
+Body:
+
+{
+  "domain": "example.com",
+  "reason": "existing_customer",
+  "source": "manual"
+}
+Suppress email
+POST /api/suppression/email
+Suppress company
+POST /api/companies/{company_id}/suppress
+Suppress contact
+POST /api/contacts/{contact_id}/suppress
+Upload suppression CSV
+POST /api/suppression/upload
+Run dedupe/suppression
+POST /api/dedupe/run
+11.29 Frontend screens
+Suppression list
+
+Columns:
+
+Type
+Value
+Reason
+Source
+Created at
+
+Actions:
+
+add
+delete
+import CSV
+Duplicate review
+
+Columns:
+
+Entity type
+Duplicate candidates
+Match reason
+Confidence
+Suggested action
+
+Actions:
+
+merge
+ignore
+suppress
+
+MVP can skip manual duplicate review and auto-merge obvious matches.
+
+11.30 Config example
+{
+  "dedupe_suppression": {
+    "enabled": true,
+    "auto_merge_companies": true,
+    "auto_merge_contacts": true,
+    "suppress_existing_customers": true,
+    "suppress_competitors": true,
+    "suppress_unsubscribed": true,
+    "suppress_bounced": true,
+    "already_contacted_cooldown_days": 90,
+    "company_name_fuzzy_match": false
+  }
+}
+11.31 MVP build order
+Step 1
+
+Build normalization functions.
+
+Step 2
+
+Add normalized fields to DB.
+
+Step 3
+
+Deduplicate companies by domain.
+
+Step 4
+
+Deduplicate contacts by email and LinkedIn.
+
+Step 5
+
+Deduplicate lead candidates.
+
+Step 6
+
+Build suppression service.
+
+Step 7
+
+Add manual suppression API.
+
+Step 8
+
+Apply suppression before scoring/export.
+
+Step 9
+
+Add suppression CSV import.
+
+11.32 Definition of done
+
+This module is complete when:
+
+Duplicate companies are not created
+Duplicate contacts are not created
+Duplicate lead candidates are not created
+Suppression list works
+Existing customers can be excluded
+Competitors can be excluded
+Unsubscribed and bounced contacts are blocked
+Suppression overrides scoring
+Suppressed leads cannot become ready for outreach
+Manual suppression is possible from UI/API
+CSV suppression import works

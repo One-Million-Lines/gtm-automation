@@ -1,0 +1,653 @@
+6. Company Enrichment Module
+6.1 Purpose
+
+Take a discovered company and turn it into a useful prospect profile.
+
+Source discovery says:
+
+This company might be relevant.
+
+Company enrichment answers:
+
+What does this company do?
+Is it a real fit?
+What tools, signals, and context can we use for scoring and outreach?
+6.2 Input
+
+Reads from:
+
+companies
+company_sources
+icps
+lead_candidates
+suppression_list
+
+Typical input company:
+
+{
+  "id": 12,
+  "name": "Example Store",
+  "domain": "examplestore.com",
+  "website_url": "https://examplestore.com",
+  "status": "discovered"
+}
+6.3 Output
+
+Writes to:
+
+companies
+company_enrichment
+signals
+lead_candidates
+module_logs
+
+Main output:
+
+company industry
+company description
+location
+employee estimate
+ecommerce platform
+tech stack
+social links
+ICP fit hints
+initial signals
+6.4 What this module should not do
+
+Do not:
+
+find contacts
+generate emails
+fully score final lead
+decide final outreach readiness
+
+It can add enrichment confidence and signal candidates, but scoring happens later.
+
+6.5 Enrichment sources
+MVP sources
+
+Start with:
+
+company website
+homepage
+about page
+pricing page
+blog page
+HTML metadata
+scripts loaded on website
+Later sources
+
+Add:
+
+BuiltWith
+Wappalyzer
+Apollo
+Clearbit
+Crunchbase
+LinkedIn company profile via Apify
+job posts
+news search
+review sites
+G2 / Capterra
+Similarweb
+Meta ads library
+Google search snippets
+6.6 Provider architecture
+
+Use replaceable providers.
+
+class CompanyEnrichmentProvider:
+    name: str
+
+    def enrich(self, company, icp, config) -> dict:
+        pass
+
+Example providers:
+
+WebsiteEnrichmentProvider
+TechStackDetectionProvider
+BuiltWithProvider
+WappalyzerProvider
+LinkedInCompanyProvider
+JobSignalProvider
+NewsSignalProvider
+6.7 Module folder structure
+/backend/modules/company_enrichment
+  module.py
+  contracts.py
+  normalizer.py
+  providers/
+    website_provider.py
+    tech_stack_provider.py
+    builtwith_provider.py
+    linkedin_provider.py
+    job_signal_provider.py
+  prompts/
+    company_profile_extraction.txt
+    icp_fit_extraction.txt
+  tests/
+6.8 Main enrichment flow
+1. Load companies with status = discovered or enrichment_failed
+2. For each company:
+   - fetch website
+   - extract relevant pages
+   - parse metadata
+   - detect basic tech stack
+   - ask AI to summarize company
+   - extract ICP-relevant attributes
+   - save enrichment snapshot
+   - update company record
+   - create signals if found
+   - update company status
+3. Log results
+6.9 Pseudocode
+class CompanyEnrichmentModule(PipelineModule):
+    name = "company_enrichment"
+
+    def run(self, context):
+        companies = company_repo.get_for_enrichment(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 50)
+        )
+
+        processed = 0
+        enriched = 0
+        failed = 0
+
+        for company in companies:
+            try:
+                company_repo.mark_processing(company.id)
+
+                enrichment_results = []
+
+                for provider in self.providers:
+                    result = provider.enrich(company, context)
+                    if result:
+                        enrichment_results.append(result)
+
+                merged = merge_enrichment_results(enrichment_results)
+
+                company_enrichment_repo.create(
+                    company_id=company.id,
+                    provider="merged",
+                    industry=merged.industry,
+                    employee_count=merged.employee_count,
+                    revenue_estimate=merged.revenue_estimate,
+                    location=merged.location,
+                    tech_stack=json.dumps(merged.tech_stack),
+                    ecommerce_platform=merged.ecommerce_platform,
+                    social_links=json.dumps(merged.social_links),
+                    raw_data=json.dumps(merged.raw_data),
+                    confidence_score=merged.confidence_score
+                )
+
+                company_repo.update_from_enrichment(company.id, merged)
+
+                signal_service.create_signals_from_enrichment(
+                    company_id=company.id,
+                    icp_id=context.icp_id,
+                    enrichment=merged
+                )
+
+                company_repo.update_status(company.id, "enriched")
+
+                processed += 1
+                enriched += 1
+
+            except Exception as e:
+                company_repo.update_status(company.id, "enrichment_failed")
+                log_error(e, company.id)
+                failed += 1
+
+        return ModuleResult(
+            success=True,
+            input_count=len(companies),
+            output_count=enriched,
+            failed_count=failed
+        )
+6.10 Website enrichment provider
+Purpose
+
+Extract useful company data from its public website.
+
+Pages to fetch
+
+Start with:
+
+homepage
+/about
+/about-us
+/company
+/pricing
+/products
+/solutions
+
+For ecommerce:
+
+/collections
+/pages/about
+/pages/contact
+
+For SaaS:
+
+/customers
+/case-studies
+/integrations
+Data extracted
+company description
+industry
+business model
+target customers
+main products
+country/language
+social links
+contact page
+pricing presence
+ecommerce indicators
+tech stack hints
+Basic crawler rules
+max pages per company: 5-10
+timeout: 10 seconds
+max HTML size: 2 MB
+ignore images/videos
+respect robots where possible
+avoid aggressive crawling
+6.11 Website parser output
+
+Normalize every website result to:
+
+{
+  "company_id": 12,
+  "source_url": "https://examplestore.com",
+  "pages_crawled": [
+    "https://examplestore.com",
+    "https://examplestore.com/about"
+  ],
+  "description": "DTC skincare brand selling online.",
+  "industry": "skincare ecommerce",
+  "business_model": "DTC ecommerce",
+  "country": "US",
+  "language": "en",
+  "products": ["skincare products"],
+  "social_links": {
+    "linkedin": "...",
+    "instagram": "..."
+  },
+  "raw_text": "clean extracted text..."
+}
+6.12 AI extraction prompt
+
+Use AI only after cleaning webpage text.
+
+Prompt:
+
+You are analyzing a company website for B2B outbound research.
+
+Given:
+- ICP definition
+- company website text
+- known source data
+
+Extract structured company enrichment.
+
+Return JSON only:
+{
+  "company_name": "",
+  "description": "",
+  "industry": "",
+  "business_model": "",
+  "target_customers": "",
+  "country": "",
+  "city": "",
+  "products_or_services": [],
+  "is_ecommerce": true/false,
+  "ecommerce_platform_guess": "",
+  "tech_stack_hints": [],
+  "icp_fit_notes": "",
+  "possible_pain_points": [],
+  "confidence_score": 0.0
+}
+
+Rules:
+- Do not invent facts.
+- If unknown, return null.
+- Use only provided text.
+- Keep descriptions short.
+6.13 Tech stack detection
+MVP detection
+
+Parse website HTML for common scripts.
+
+Examples:
+
+Shopify
+WooCommerce
+Klaviyo
+Omnisend
+Mailchimp
+HubSpot
+Intercom
+Segment
+GA4
+Meta Pixel
+Attentive
+Yotpo
+Recharge
+Gorgias
+Detection method
+
+Look for:
+
+script src
+inline JS
+meta generator tags
+known domains
+HTML classes
+checkout URLs
+
+Example patterns:
+
+cdn.shopify.com → Shopify
+klaviyo.com → Klaviyo
+omnisnippet1.com → Omnisend
+chimpstatic.com → Mailchimp
+js.hs-scripts.com → HubSpot
+Output
+{
+  "tech_stack": ["Shopify", "Klaviyo", "Meta Pixel"],
+  "ecommerce_platform": "Shopify",
+  "confidence_score": 0.85,
+  "evidence": [
+    {
+      "tool": "Klaviyo",
+      "source_url": "https://examplestore.com",
+      "evidence": "script contains klaviyo.com"
+    }
+  ]
+}
+6.14 Signal creation from enrichment
+
+When enrichment detects something ICP-relevant, create signals.
+
+Examples:
+
+uses Klaviyo
+uses Shopify
+has abandoned cart scripts
+mentions lifecycle marketing
+has pricing page
+uses competitor tool
+
+Write to:
+
+signals
+
+Example:
+
+INSERT INTO signals (
+  company_id,
+  icp_id,
+  signal_type,
+  signal_name,
+  description,
+  extracted_text,
+  source_url,
+  strength_score,
+  confidence_score,
+  detected_by
+)
+VALUES (
+  12,
+  1,
+  'competitor_usage',
+  'Uses Klaviyo',
+  'Website loads Klaviyo script.',
+  'klaviyo.com script detected in homepage HTML',
+  'https://examplestore.com',
+  0.8,
+  0.9,
+  'tech_stack_detector'
+);
+6.15 Enrichment merge logic
+
+Multiple providers may return conflicting data.
+
+Use priority rules.
+
+Example:
+
+Company name
+manual/imported name > website title > AI guess
+Domain
+existing domain should not change
+Industry
+manual/imported > AI website extraction > directory
+Tech stack
+merge all unique tools
+Employee count
+Apollo/Clearbit > LinkedIn > AI estimate
+6.16 Confidence scoring
+
+Each enrichment snapshot gets a confidence score.
+
+Suggested:
+
+website successfully crawled: +0.3
+about page found: +0.1
+AI extracted clear description: +0.2
+tech stack detected: +0.2
+location found: +0.1
+social links found: +0.1
+
+Max:
+
+1.0
+6.17 Company statuses
+
+Use:
+
+discovered
+processing
+enriched
+enrichment_failed
+needs_review
+rejected
+
+Set to needs_review if:
+
+website unavailable
+domain redirects strangely
+description unclear
+industry does not match ICP
+low confidence
+
+Set to rejected if:
+
+clearly not a company
+agency when agencies excluded
+competitor
+adult/gambling/illegal category
+not target geography
+6.18 ICP fit hints
+
+This module should not final-score, but it can add notes.
+
+Example:
+
+Company appears to be ecommerce and uses Shopify + Klaviyo.
+Likely good fit for ICP targeting DTC brands using competitor email tools.
+
+Store in:
+
+company_enrichment.raw_data
+lead_candidates.qualification_summary later
+
+Or create a preliminary signal:
+
+signal_type = icp_fit_hint
+6.19 Error handling
+Item-level errors
+website timeout
+invalid SSL
+403 blocked
+no useful HTML
+AI extraction failed
+tech detection failed
+
+Handle by:
+
+log error
+mark company enrichment_failed
+continue to next company
+Provider-level errors
+API key invalid
+rate limited
+provider unavailable
+
+Handle by:
+
+disable provider for that run
+log provider error
+continue with other providers if possible
+6.20 Caching
+
+Avoid re-crawling the same website too often.
+
+Add later:
+
+enrichment_cache
+
+MVP rule:
+
+Do not re-enrich if enriched in last 30 days unless forced.
+
+Can check:
+
+SELECT created_at
+FROM company_enrichment
+WHERE company_id = ?
+ORDER BY created_at DESC
+LIMIT 1;
+6.21 Module config example
+{
+  "company_enrichment": {
+    "enabled": true,
+    "limit": 50,
+    "force_refresh": false,
+    "providers": {
+      "website": {
+        "enabled": true,
+        "max_pages": 5,
+        "timeout_seconds": 10
+      },
+      "tech_stack": {
+        "enabled": true
+      },
+      "builtwith": {
+        "enabled": false,
+        "api_key_env": "BUILTWITH_API_KEY"
+      },
+      "linkedin_company": {
+        "enabled": false,
+        "provider": "apify"
+      }
+    }
+  }
+}
+6.22 API endpoints
+Run enrichment
+POST /api/company-enrichment/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 50,
+  "force_refresh": false
+}
+Get enrichment for company
+GET /api/companies/{company_id}/enrichment
+Force re-enrich company
+POST /api/companies/{company_id}/enrich
+Get companies needing review
+GET /api/companies?status=needs_review
+6.23 Frontend screens
+Company enrichment queue
+
+Columns:
+
+Company
+Domain
+Status
+Last enriched
+Confidence
+Detected tools
+ICP fit hint
+
+Actions:
+
+enrich now
+force refresh
+approve
+reject
+suppress
+view details
+Company profile page
+
+Sections:
+
+Basic company info
+Website summary
+Tech stack
+Signals
+Source evidence
+Raw enrichment history
+6.24 MVP build order
+Step 1
+
+Build company selection:
+
+get discovered companies for enrichment
+mark processing / enriched / failed
+Step 2
+
+Build website fetcher:
+
+fetch homepage
+extract title, meta description, text
+Step 3
+
+Build basic tech detector:
+
+detect Shopify, Klaviyo, WooCommerce, HubSpot, Mailchimp
+Step 4
+
+Build AI company profile extraction:
+
+website text → structured JSON
+Step 5
+
+Save to:
+
+company_enrichment
+companies
+signals
+Step 6
+
+Add company profile UI.
+
+6.25 Definition of done
+
+This module is complete when:
+
+Discovered companies can be enriched
+Website data is extracted
+Basic tech stack is detected
+AI creates a structured company profile
+Company table is updated
+Enrichment snapshot is stored
+ICP-relevant signals are created
+Failures are logged without stopping the run
+Companies can be reviewed in UI

@@ -1,0 +1,824 @@
+12. Knowledge base module
+12.1 Purpose
+
+The knowledge base stores everything the system learns over time.
+
+It is the memory layer for:
+
+campaign learnings
+reply patterns
+winning messages
+objections
+competitor mentions
+call transcripts
+manual notes
+ICP refinements
+positioning insights
+
+Without this module, every campaign starts from zero.
+
+With it, the system can make:
+
+Campaign 2 smarter than Campaign 1
+Campaign 3 smarter than Campaign 2
+12.2 Main goal
+
+Turn raw feedback into reusable outbound intelligence.
+
+Examples:
+
+People using Klaviyo complain about pricing
+Founders respond better to cost-saving angles
+CRM managers respond better to workflow automation angles
+“Not looking right now” usually means bad timing, not bad ICP
+Companies hiring lifecycle marketers are high-intent
+12.3 Inputs
+
+Reads from:
+
+campaign_events
+email replies
+call transcripts
+demo notes
+manual notes
+ICP definitions
+email drafts
+lead scores
+signal evidence
+export results
+
+Future sources:
+
+Fireflies
+Gong
+HubSpot
+Instantly
+Smartlead
+HeyReach
+Google Docs
+uploaded CSV
+uploaded TXT
+uploaded PDF
+12.4 Output
+
+Writes to:
+
+knowledge_items
+icps
+signals
+lead_candidates
+email_drafts
+module_logs
+
+Primary table:
+
+knowledge_items
+12.5 Knowledge item types
+
+Use these types:
+
+objection
+winning_message
+losing_message
+competitor_note
+pain_point
+persona_insight
+segment_insight
+reply_pattern
+call_transcript
+demo_note
+campaign_summary
+positioning_note
+manual_note
+icp_refinement
+signal_pattern
+draft_rule
+exclusion_rule
+12.6 Database table
+
+Current table:
+
+CREATE TABLE knowledge_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    item_type TEXT NOT NULL,
+    title TEXT,
+
+    content TEXT,
+    summary TEXT,
+
+    source_type TEXT,
+    source_url TEXT,
+
+    tags TEXT,
+    importance_score REAL,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+Recommended additions:
+
+ALTER TABLE knowledge_items ADD COLUMN status TEXT DEFAULT 'active';
+ALTER TABLE knowledge_items ADD COLUMN confidence_score REAL DEFAULT 0.7;
+ALTER TABLE knowledge_items ADD COLUMN evidence_count INTEGER DEFAULT 1;
+ALTER TABLE knowledge_items ADD COLUMN applies_to_persona TEXT;
+ALTER TABLE knowledge_items ADD COLUMN applies_to_segment TEXT;
+ALTER TABLE knowledge_items ADD COLUMN applies_to_competitor TEXT;
+ALTER TABLE knowledge_items ADD COLUMN valid_from TEXT;
+ALTER TABLE knowledge_items ADD COLUMN valid_until TEXT;
+12.7 Optional evidence table
+
+Better version:
+
+CREATE TABLE knowledge_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    knowledge_item_id INTEGER NOT NULL,
+
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    source_url TEXT,
+
+    evidence_text TEXT,
+    raw_data TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (knowledge_item_id) REFERENCES knowledge_items(id)
+);
+
+Use this when multiple replies or calls support the same insight.
+
+Example:
+
+Knowledge item:
+“CRM managers mention manual segmentation as a pain.”
+
+Evidence:
+- reply from lead A
+- demo transcript B
+- call notes C
+12.8 Knowledge item structure
+
+Every knowledge item should have:
+
+{
+  "item_type": "objection",
+  "title": "Klaviyo replacement risk",
+  "summary": "Prospects using Klaviyo worry about switching effort.",
+  "content": "Several replies mentioned that migration from Klaviyo feels risky because existing flows and lists are already configured.",
+  "tags": ["klaviyo", "migration", "objection"],
+  "importance_score": 0.82,
+  "confidence_score": 0.76,
+  "applies_to_persona": "crm_lead",
+  "applies_to_competitor": "Klaviyo",
+  "evidence_count": 4
+}
+12.9 How knowledge is used downstream
+ICP refinement
+
+Knowledge tells the ICP module:
+
+which segments respond
+which segments reject
+which signals matter
+which exclusions to add
+Signal extraction
+
+Knowledge tells signal extraction:
+
+which patterns are meaningful
+which competitors matter
+which phrases indicate pain
+Scoring
+
+Knowledge modifies scoring:
+
+companies with historically strong signals get boosted
+personas with poor response rates get lower priority
+bad-fit patterns are penalized
+Draft generation
+
+Knowledge improves copy:
+
+use winning phrases
+avoid failed angles
+handle common objections
+adapt messaging by persona
+Quality control
+
+Knowledge adds rules:
+
+avoid claims that caused negative replies
+avoid overused subject lines
+avoid generic personalization
+12.10 Main module flow
+1. Collect raw inputs
+2. Normalize source data
+3. Extract insights
+4. Deduplicate similar insights
+5. Attach evidence
+6. Score importance/confidence
+7. Store knowledge items
+8. Update ICP suggestions
+9. Feed future modules
+12.11 Source ingestion types
+Campaign replies
+
+From:
+
+campaign_events.reply_text
+
+Extract:
+
+positive triggers
+negative triggers
+objections
+competitor mentions
+bad-fit reasons
+persona reactions
+Demo calls / transcripts
+
+From:
+
+Fireflies
+manual upload
+Gong later
+
+Extract:
+
+pain points
+competitors
+buying criteria
+decision process
+objections
+words prospects use
+Email drafts and outcomes
+
+Compare:
+
+email draft
+lead profile
+reply outcome
+
+Extract:
+
+which angle worked
+which subject line worked
+which CTA worked
+which personalization worked
+Manual notes
+
+User can add:
+
+“Founders care more about saving time than replacing Klaviyo.”
+
+Manual notes should get higher trust initially.
+
+12.12 Knowledge extraction with AI
+
+Use AI to extract structured insights from raw feedback.
+
+Prompt:
+
+You analyze outbound campaign feedback and extract reusable GTM knowledge.
+
+Given:
+- ICP definition
+- campaign reply or transcript
+- lead profile
+- email draft that was sent
+- campaign outcome
+
+Return JSON only:
+{
+  "knowledge_items": [
+    {
+      "item_type": "",
+      "title": "",
+      "summary": "",
+      "content": "",
+      "tags": [],
+      "applies_to_persona": "",
+      "applies_to_segment": "",
+      "applies_to_competitor": "",
+      "importance_score": 0.0,
+      "confidence_score": 0.0,
+      "evidence_text": ""
+    }
+  ]
+}
+
+Rules:
+- Extract only reusable insights.
+- Do not create knowledge from one weak ambiguous reply unless marked low confidence.
+- Keep titles short.
+- Evidence text must come from source content.
+- If nothing useful exists, return {"knowledge_items": []}.
+12.13 Reply classification
+
+Before extracting knowledge, classify replies.
+
+Reply types:
+
+positive
+negative
+neutral
+not_now
+unsubscribe
+wrong_person
+referral
+objection
+pricing_objection
+competitor_locked
+meeting_interest
+
+Example:
+
+“Already using Klaviyo and not looking to change.”
+
+Classify as:
+
+{
+  "reply_intent": "competitor_locked",
+  "reply_sentiment": "negative",
+  "competitor": "Klaviyo",
+  "objection": "not looking to switch"
+}
+12.14 Knowledge deduplication
+
+Avoid storing the same insight many times.
+
+Deduplicate by:
+
+item_type
+normalized title
+applies_to_persona
+applies_to_competitor
+applies_to_segment
+
+If same insight appears again:
+
+increase evidence_count
+increase confidence_score
+update summary if better
+add evidence
+12.15 Confidence scoring
+
+Confidence should depend on evidence.
+
+Example:
+
+manual note from user: 0.8
+1 positive reply: 0.4
+3 similar replies: 0.7
+10 similar replies: 0.9
+demo call evidence: 0.8
+multiple source types: +0.1
+
+Cap at:
+
+0.95
+12.16 Importance scoring
+
+Importance answers:
+
+How much should this affect future outreach?
+
+Factors:
+
+appears in positive replies
+appears across multiple leads
+linked to meetings booked
+linked to negative replies
+high-value segment
+high-confidence source
+
+Example:
+
+Objection causing many rejections → high importance
+One random comment → low importance
+12.17 Knowledge lifecycle
+
+Statuses:
+
+active
+needs_review
+archived
+rejected
+stale
+
+Mark as stale when:
+
+old campaign pattern no longer works
+ICP changed significantly
+new evidence contradicts it
+12.18 Contradiction handling
+
+The system should allow conflicting knowledge.
+
+Example:
+
+Founders respond well to cost-saving angle.
+CRM managers respond poorly to cost-saving angle.
+
+This is not a contradiction if persona differs.
+
+But this is:
+
+“Cost-saving angle works for CRM managers”
+“Cost-saving angle performs poorly for CRM managers”
+
+Mark both as:
+
+needs_review
+
+or store confidence separately based on newer evidence.
+
+12.19 Knowledge retrieval
+
+Other modules should query knowledge by context.
+
+Example retrieval filters:
+
+project_id
+icp_id
+persona
+competitor
+segment
+item_type
+tags
+importance_score
+confidence_score
+status = active
+
+Example:
+
+knowledge_repo.get_relevant(
+    project_id=1,
+    icp_id=1,
+    persona="crm_lead",
+    competitor="Klaviyo",
+    item_types=["objection", "winning_message", "pain_point"],
+    limit=10
+)
+12.20 MVP retrieval without vector DB
+
+Since you only have SQLite:
+
+Use:
+
+structured filters
+tags
+LIKE search
+importance sorting
+
+Example:
+
+SELECT *
+FROM knowledge_items
+WHERE project_id = ?
+  AND icp_id = ?
+  AND status = 'active'
+  AND (
+    applies_to_persona = ?
+    OR applies_to_competitor = ?
+    OR tags LIKE ?
+  )
+ORDER BY importance_score DESC, confidence_score DESC
+LIMIT 10;
+
+Later:
+
+add embeddings + vector DB
+or SQLite FTS5
+12.21 Recommended SQLite FTS5 later
+
+For better retrieval:
+
+CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+    title,
+    summary,
+    content,
+    tags
+);
+
+This lets you search:
+
+migration objection
+Klaviyo pricing
+lifecycle automation
+
+But not needed for MVP.
+
+12.22 Module structure
+/backend/modules/knowledge_base
+  module.py
+  contracts.py
+  ingestion_service.py
+  extraction_service.py
+  dedupe_service.py
+  retrieval_service.py
+  confidence_service.py
+  providers/
+    campaign_reply_provider.py
+    manual_note_provider.py
+    transcript_provider.py
+  prompts/
+    extract_knowledge_from_reply.txt
+    extract_knowledge_from_transcript.txt
+    summarize_campaign.txt
+  tests/
+12.23 Core services
+Knowledge ingestion service
+class KnowledgeIngestionService:
+    def ingest_campaign_events(self, project_id, icp_id):
+        pass
+
+    def ingest_manual_note(self, project_id, icp_id, note):
+        pass
+
+    def ingest_transcript(self, project_id, icp_id, transcript):
+        pass
+Knowledge extraction service
+class KnowledgeExtractionService:
+    def extract_from_reply(self, reply, context):
+        pass
+
+    def extract_from_transcript(self, transcript, context):
+        pass
+
+    def extract_from_campaign_summary(self, campaign_data, context):
+        pass
+Knowledge retrieval service
+class KnowledgeRetrievalService:
+    def get_for_draft_generation(self, lead_candidate_id):
+        pass
+
+    def get_for_icp_refinement(self, icp_id):
+        pass
+
+    def get_for_signal_extraction(self, icp_id, company_id):
+        pass
+
+    def get_for_scoring(self, icp_id, persona=None, competitor=None):
+        pass
+12.24 Main module pseudocode
+class KnowledgeBaseModule(PipelineModule):
+    name = "knowledge_base"
+
+    def run(self, context):
+        sources = self.load_sources(context)
+
+        created = 0
+        updated = 0
+        failed = 0
+
+        for source in sources:
+            try:
+                extracted_items = extraction_service.extract(source, context)
+
+                for item in extracted_items:
+                    existing = dedupe_service.find_similar(item)
+
+                    if existing:
+                        knowledge_repo.update_with_evidence(existing.id, item)
+                        updated += 1
+                    else:
+                        knowledge_repo.create(item)
+                        created += 1
+
+            except Exception as e:
+                failed += 1
+                log_error(e, source)
+
+        return ModuleResult(
+            success=True,
+            input_count=len(sources),
+            output_count=created + updated,
+            failed_count=failed
+        )
+12.25 Manual note API
+
+Manual notes are essential for MVP.
+
+POST /api/knowledge/manual
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "item_type": "positioning_note",
+  "title": "Founders prefer time-saving angle",
+  "content": "From recent calls, founders seem to care more about saving time than replacing Klaviyo.",
+  "tags": ["founder", "positioning", "time-saving"],
+  "importance_score": 0.8
+}
+12.26 Other API endpoints
+Get knowledge items
+GET /api/knowledge?project_id=1&icp_id=1
+Get relevant knowledge for lead
+GET /api/leads/{lead_candidate_id}/knowledge
+Update knowledge item
+PUT /api/knowledge/{knowledge_item_id}
+Archive knowledge item
+POST /api/knowledge/{knowledge_item_id}/archive
+Run knowledge extraction
+POST /api/knowledge/extract
+Upload transcript
+POST /api/knowledge/upload-transcript
+12.27 Frontend screens
+Knowledge base list
+
+Columns:
+
+Type
+Title
+Summary
+ICP
+Persona
+Competitor
+Importance
+Confidence
+Evidence count
+Status
+Updated at
+
+Actions:
+
+view
+edit
+archive
+reject
+mark important
+Knowledge item detail
+
+Sections:
+
+Insight
+Summary
+Full content
+Applies to
+Evidence
+Related campaigns
+Related replies
+Status
+Add manual knowledge
+
+Form:
+
+Type
+Title
+Content
+ICP
+Persona
+Competitor
+Tags
+Importance
+Campaign learning dashboard
+
+Shows:
+
+top objections
+top competitors
+best-performing angles
+worst-performing angles
+segments with positive replies
+segments to avoid
+12.28 How draft generation should use it
+
+Before generating an email draft, retrieve:
+
+winning messages for this ICP
+objections for this persona
+competitor notes for detected competitor
+pain points for this segment
+draft rules
+
+Example:
+
+Lead uses Klaviyo.
+Contact is Head of CRM.
+
+Retrieve:
+- Klaviyo objections
+- CRM leader pain points
+- winning messages for ecommerce lifecycle automation
+12.29 How scoring should use it
+
+Knowledge can adjust scores.
+
+Examples:
+
+If ICP segment has high positive reply rate → boost
+If persona usually rejects → lower persona priority
+If competitor displacement signal works well → boost signal
+If repeated objection exists → needs better copy, not rejection
+
+MVP:
+
+do not modify scores automatically
+only show knowledge in summary
+
+Later:
+
+use knowledge-based score modifiers
+12.30 How ICP refinement should use it
+
+Knowledge should create suggestions like:
+
+Add “Klaviyo migration risk” as objection
+Increase priority for CRM Manager persona
+Lower priority for generic Marketing Manager
+Add “hiring lifecycle marketer” as strong signal
+Exclude agencies
+
+Store suggestions as:
+
+item_type = icp_refinement
+
+Do not auto-apply in MVP.
+
+12.31 Config example
+{
+  "knowledge_base": {
+    "enabled": true,
+    "auto_extract_from_replies": true,
+    "auto_extract_from_transcripts": false,
+    "min_confidence": 0.4,
+    "dedupe_similar_items": true,
+    "require_manual_approval": true,
+    "use_for_draft_generation": true,
+    "use_for_scoring": false
+  }
+}
+12.32 MVP build order
+Step 1
+
+Build knowledge_items CRUD.
+
+Step 2
+
+Add manual notes.
+
+Step 3
+
+Add retrieval by ICP/persona/competitor/tags.
+
+Step 4
+
+Connect retrieval to email draft generation.
+
+Step 5
+
+Import campaign replies into knowledge extraction.
+
+Step 6
+
+Add AI extraction from replies.
+
+Step 7
+
+Add evidence table.
+
+Step 8
+
+Add transcript upload later.
+
+12.33 MVP version
+
+For first usable version:
+
+Manual knowledge notes
+Campaign reply ingestion
+AI extraction from replies
+Simple dedupe by title/type/persona/competitor
+Relevant knowledge retrieval for draft generation
+
+Skip initially:
+
+vector search
+auto ICP updates
+call transcript ingestion
+automatic scoring modifiers
+12.34 Definition of done
+
+This module is complete when:
+
+You can store campaign learnings
+You can add manual GTM notes
+Replies can be analyzed into reusable insights
+Insights are deduplicated
+Knowledge has confidence and importance scores
+Knowledge can be retrieved by ICP/persona/competitor
+Draft generation can use relevant knowledge
+ICP refinement can receive suggestions
+Old or bad knowledge can be archived

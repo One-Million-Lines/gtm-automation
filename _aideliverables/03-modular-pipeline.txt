@@ -1,0 +1,1131 @@
+3. Modular pipeline architecture
+3.1 Goal
+
+Build a modular outreach pipeline where each module:
+
+has one clear responsibility
+reads from SQLite
+writes back to SQLite
+can be replaced later
+can fail without breaking the whole system
+can be run manually or in the background
+
+Final output:
+
+ready outreach leads + email drafts
+3.2 Pipeline overview
+ICP Definition
+  ↓
+Company Discovery
+  ↓
+Company Enrichment
+  ↓
+Contact Discovery
+  ↓
+Contact Enrichment
+  ↓
+Signal Extraction
+  ↓
+Scoring
+  ↓
+Deduplication & Suppression
+  ↓
+Research Summary
+  ↓
+Email Draft Generation
+  ↓
+Quality Control
+  ↓
+Export / Deliverable
+  ↓
+Feedback Ingestion
+  ↓
+Knowledge Update
+3.3 Core design principle
+
+Each module should follow this pattern:
+
+Input → Process → Save → Mark Status → Log Result
+
+No module should directly depend on the internal logic of another module.
+
+It should only depend on:
+
+database records
+module config
+shared interfaces
+3.4 Module interface
+
+Every module should implement the same basic interface.
+
+class PipelineModule:
+    name: str
+
+    def run(self, context: PipelineContext) -> ModuleResult:
+        pass
+PipelineContext
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+
+@dataclass
+class PipelineContext:
+    project_id: int
+    icp_id: Optional[int]
+    pipeline_run_id: int
+    config: Dict[str, Any]
+    dry_run: bool = False
+ModuleResult
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+
+@dataclass
+class ModuleResult:
+    success: bool
+    input_count: int = 0
+    output_count: int = 0
+    failed_count: int = 0
+    message: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+3.5 Pipeline orchestrator
+
+The orchestrator controls which modules run and in what order.
+
+class PipelineOrchestrator:
+    def __init__(self, modules):
+        self.modules = modules
+
+    def run(self, context: PipelineContext):
+        for module in self.modules:
+            result = module.run(context)
+
+            if not result.success:
+                # log failure
+                # decide whether to stop or continue
+                break
+3.6 Pipeline run types
+
+Support different run types.
+
+full_pipeline
+company_discovery_only
+company_enrichment_only
+contact_discovery_only
+signal_extraction_only
+draft_generation_only
+feedback_ingestion_only
+
+Example:
+
+FULL_PIPELINE = [
+    CompanyDiscoveryModule(),
+    CompanyEnrichmentModule(),
+    ContactDiscoveryModule(),
+    ContactEnrichmentModule(),
+    SignalExtractionModule(),
+    ScoringModule(),
+    DeduplicationModule(),
+    ResearchSummaryModule(),
+    EmailDraftModule(),
+    QualityControlModule(),
+    ExportModule(),
+]
+3.7 Pipeline status model
+
+Use these statuses:
+
+pending
+running
+completed
+failed
+partially_completed
+cancelled
+skipped
+
+For records:
+
+new
+processing
+processed
+failed
+needs_review
+qualified
+rejected
+ready
+exported
+3.8 Module-by-module architecture
+Module 1: ICP Definition Module
+
+Purpose:
+
+Create and refine ICP configuration.
+
+Input:
+
+User input from frontend
+Manual text
+Existing knowledge items
+
+Output:
+
+icps table
+
+Writes to:
+
+icps
+knowledge_items
+
+Main fields:
+
+target industries
+target geographies
+company size
+personas
+competitors
+pain points
+buying signals
+exclusion rules
+offer summary
+outreach angle
+
+MVP:
+
+Manual form only
+
+Later:
+
+AI-assisted ICP refinement
+Module 2: Company Discovery Module
+
+Purpose:
+
+Find companies matching the ICP.
+
+Input:
+
+icps
+knowledge_items
+config
+
+Sources:
+
+Apify
+Google Search
+directories
+review sites
+job boards
+uploaded CSV
+manual seed list
+
+Output:
+
+companies
+company_sources
+lead_candidates
+
+Responsibilities:
+
+discover companies
+normalize company name
+extract domain
+avoid duplicate domains
+create lead candidate if ICP match is possible
+
+Deduplication key:
+
+domain
+
+Example output:
+
+{
+  "name": "Example Store",
+  "domain": "examplestore.com",
+  "source": "apify_google_search",
+  "source_url": "https://..."
+}
+Module 3: Company Enrichment Module
+
+Purpose:
+
+Add firmographic and technical information.
+
+Input:
+
+companies with status discovered/new
+
+Output:
+
+companies
+company_enrichment
+signals
+
+Enrichment data:
+
+industry
+location
+employee count
+ecommerce platform
+tech stack
+LinkedIn company page
+description
+competitor tools used
+
+Providers:
+
+website scraper
+BuiltWith
+Wappalyzer
+Apify
+manual APIs
+LLM website extraction
+
+MVP:
+
+scrape homepage + about page + detect basic info with AI
+Module 4: Contact Discovery Module
+
+Purpose:
+
+Find people at qualified companies.
+
+Input:
+
+companies
+icps.target_personas
+
+Output:
+
+contacts
+contact_sources
+lead_candidates
+
+Target personas:
+
+Founder
+CEO
+CMO
+Head of Growth
+CRM Manager
+Lifecycle Marketing Manager
+Ecommerce Manager
+Marketing Director
+
+Responsibilities:
+
+find matching people
+normalize job titles
+connect contact to company
+create/update lead candidate
+
+Providers:
+
+Apollo
+Hunter
+LinkedIn scraping via Apify
+company website team page
+manual upload
+Module 5: Contact Enrichment Module
+
+Purpose:
+
+Find and validate contact details.
+
+Input:
+
+contacts with missing/unknown email
+
+Output:
+
+contacts
+contact_enrichment
+
+Data:
+
+email
+email validation status
+LinkedIn URL
+job title
+role confidence
+
+Email statuses:
+
+valid
+risky
+invalid
+catch_all
+unknown
+not_found
+
+Ready rule:
+
+valid preferred
+catch_all/risky allowed only with high lead score
+Module 6: Signal Extraction Module
+
+Purpose:
+
+Find reasons why this company should be contacted now.
+
+Input:
+
+company data
+contact data
+ICP
+knowledge base
+external pages
+
+Output:
+
+signals
+lead_candidates
+
+Signal types:
+
+competitor_usage
+bad_reviews
+hiring_intent
+tech_stack
+growth_signal
+funding_signal
+website_relaunch
+manual_signal
+content_signal
+
+Example signals:
+
+Uses Klaviyo
+Hiring lifecycle marketer
+Mentions email automation
+Has abandoned cart campaigns
+Complains about high email platform cost
+Recently migrated ecommerce platform
+
+Each signal must include:
+
+description
+source_url
+extracted_text
+strength_score
+confidence_score
+Module 7: Scoring Module
+
+Purpose:
+
+Rank leads by quality.
+
+Input:
+
+lead_candidates
+companies
+contacts
+signals
+icps
+
+Output:
+
+lead_candidates scores
+
+Score components:
+
+icp_fit_score
+signal_score
+persona_fit_score
+data_quality_score
+final_score
+
+Suggested formula:
+
+final_score =
+30% ICP fit
+25% signal strength
+20% persona fit
+15% data quality
+10% freshness
+
+Result statuses:
+
+qualified
+needs_review
+rejected
+Module 8: Deduplication & Suppression Module
+
+Purpose:
+
+Prevent bad or duplicate outreach.
+
+Input:
+
+lead_candidates
+companies
+contacts
+suppression_list
+campaign_events
+
+Output:
+
+updated lead statuses
+
+Checks:
+
+duplicate domain
+duplicate email
+already contacted
+unsubscribed
+bounced
+customer
+competitor
+blacklisted domain
+missing email
+
+Writes:
+
+lead_candidates.lead_status
+contacts.status
+companies.status
+Module 9: Research Summary Module
+
+Purpose:
+
+Create a compact research brief for each lead.
+
+Input:
+
+company
+contact
+signals
+ICP
+knowledge_items
+
+Output:
+
+qualification_summary in lead_candidates
+
+Summary should include:
+
+what the company does
+why it matches the ICP
+what signal was found
+likely pain point
+recommended outreach angle
+
+Example:
+
+This company appears to be a DTC fashion retailer using Klaviyo.
+They are hiring for lifecycle marketing, suggesting active investment in email automation.
+The best angle is to position Actor/Vibetrace as a way to reduce manual lifecycle work and improve automation control.
+Module 10: Email Draft Generation Module
+
+Purpose:
+
+Generate first-touch email draft.
+
+Input:
+
+lead candidate
+research summary
+signals
+ICP
+knowledge base
+style rules
+
+Output:
+
+email_drafts
+
+Draft structure:
+
+subject
+opening line
+pain/problem
+relevance
+soft CTA
+
+Rules:
+
+short
+specific
+not spammy
+no fake claims
+no over-personalization
+must reference real signal only
+Module 11: Quality Control Module
+
+Purpose:
+
+Check if the draft is safe and usable.
+
+Input:
+
+email_drafts
+signals
+source_evidence
+
+Output:
+
+email_drafts.quality_status
+email_drafts.quality_score
+lead_candidates.ready_for_outreach
+
+Checks:
+
+has valid email
+has source-backed personalization
+does not claim unsupported facts
+not too long
+not generic
+not aggressive
+not misleading
+clear CTA
+
+Pass condition:
+
+quality_score >= 70
+Module 12: Export Module
+
+Purpose:
+
+Generate final deliverable.
+
+Input:
+
+ready lead candidates
+email drafts
+
+Output:
+
+CSV
+JSON
+Google Sheet later
+Clay webhook later
+CRM later
+
+MVP export fields:
+
+company_name
+domain
+industry
+country
+contact_name
+job_title
+email
+linkedin_url
+signals
+score
+email_subject
+email_body
+source_urls
+Module 13: Feedback Ingestion Module
+
+Purpose:
+
+Import campaign results.
+
+Input:
+
+Instantly
+Smartlead
+HeyReach
+manual CSV
+Gmail replies
+
+Output:
+
+campaign_events
+contacts.status
+lead_candidates.lead_status
+knowledge_items
+
+Events:
+
+sent
+opened
+replied
+positive_reply
+negative_reply
+meeting_booked
+bounced
+unsubscribed
+Module 14: Knowledge Update Module
+
+Purpose:
+
+Make the system smarter over time.
+
+Input:
+
+campaign_events
+reply text
+demo notes
+call transcripts
+manual notes
+
+Output:
+
+knowledge_items
+updated ICP suggestions
+updated messaging briefs
+
+Extract:
+
+winning phrases
+objections
+competitors mentioned
+pain points
+bad-fit patterns
+reply patterns
+successful angles
+3.9 Data handoff between modules
+
+Each module should not pass large objects directly to the next one.
+
+Instead:
+
+Module A writes to SQLite
+Module B reads from SQLite
+
+Example:
+
+Company Discovery writes companies
+Company Enrichment reads companies where status = discovered
+
+This makes the system restartable.
+
+3.10 Module input/output contract
+
+Each module should have a contract file.
+
+Example:
+
+class CompanyDiscoveryInput:
+    project_id: int
+    icp_id: int
+    limit: int
+
+class CompanyDiscoveryOutput:
+    created_companies: int
+    skipped_duplicates: int
+    failed_items: int
+
+Recommended folder:
+
+/backend/modules/company_discovery/
+  module.py
+  contracts.py
+  providers/
+  prompts/
+  tests/
+3.11 Provider abstraction
+
+Each module can use providers.
+
+Example:
+
+CompanyDiscoveryModule
+  → ApifyCompanyDiscoveryProvider
+  → GoogleSearchProvider
+  → CSVUploadProvider
+
+Provider interface:
+
+class CompanyDiscoveryProvider:
+    def discover(self, icp, config) -> list[dict]:
+        pass
+
+This allows you to replace Apify later without rewriting the module.
+
+3.12 Recommended backend folder structure
+/backend
+  /app
+    main.py
+
+  /db
+    database.py
+    schema.sql
+
+  /core
+    config.py
+    logging.py
+    errors.py
+
+  /pipeline
+    context.py
+    result.py
+    orchestrator.py
+    registry.py
+    runner.py
+
+  /modules
+    /company_discovery
+      module.py
+      contracts.py
+      providers/
+        apify_provider.py
+        csv_provider.py
+
+    /company_enrichment
+      module.py
+      providers/
+        website_scraper.py
+        ai_extractor.py
+
+    /contact_discovery
+      module.py
+      providers/
+
+    /contact_enrichment
+      module.py
+      providers/
+
+    /signal_extraction
+      module.py
+      prompts/
+
+    /scoring
+      module.py
+
+    /deduplication
+      module.py
+
+    /research_summary
+      module.py
+      prompts/
+
+    /email_draft
+      module.py
+      prompts/
+
+    /quality_control
+      module.py
+      prompts/
+
+    /export
+      module.py
+
+  /repositories
+    company_repo.py
+    contact_repo.py
+    lead_repo.py
+    signal_repo.py
+
+  /services
+    suppression_service.py
+    scoring_service.py
+    normalization_service.py
+    ai_service.py
+
+  /api
+    routes_icps.py
+    routes_pipeline.py
+    routes_leads.py
+    routes_exports.py
+3.13 Pipeline registry
+
+Create a module registry.
+
+MODULE_REGISTRY = {
+    "company_discovery": CompanyDiscoveryModule,
+    "company_enrichment": CompanyEnrichmentModule,
+    "contact_discovery": ContactDiscoveryModule,
+    "contact_enrichment": ContactEnrichmentModule,
+    "signal_extraction": SignalExtractionModule,
+    "scoring": ScoringModule,
+    "deduplication": DeduplicationModule,
+    "research_summary": ResearchSummaryModule,
+    "email_draft": EmailDraftModule,
+    "quality_control": QualityControlModule,
+    "export": ExportModule,
+}
+
+Then define pipeline presets:
+
+PIPELINE_PRESETS = {
+    "full_pipeline": [
+        "company_discovery",
+        "company_enrichment",
+        "contact_discovery",
+        "contact_enrichment",
+        "signal_extraction",
+        "scoring",
+        "deduplication",
+        "research_summary",
+        "email_draft",
+        "quality_control",
+        "export",
+    ],
+    "drafts_only": [
+        "research_summary",
+        "email_draft",
+        "quality_control",
+        "export",
+    ],
+}
+3.14 Error handling
+
+Each module should handle item-level failures.
+
+Bad:
+
+1 failed company kills the whole run
+
+Good:
+
+1 failed company is logged, pipeline continues
+
+Recommended behavior:
+
+module fails only if provider/system failure happens
+individual item failures are counted and logged
+3.15 Retry strategy
+
+Retry only external operations.
+
+Examples:
+
+API timeout
+rate limit
+temporary scraper error
+AI API error
+
+Do not retry:
+
+invalid URL
+missing domain
+invalid email
+suppressed contact
+
+Simple retry config:
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = [5, 20, 60]
+3.16 Idempotency rules
+
+Every module must be safe to rerun.
+
+Examples:
+
+Company discovery:
+
+If domain already exists, update source, do not create duplicate.
+
+Contact discovery:
+
+If same email exists, reuse contact.
+
+Draft generation:
+
+If approved draft exists, do not overwrite.
+If draft failed QC, generate new version.
+
+Signal extraction:
+
+If same signal_type + company_id + source_url exists, update it instead of duplicating.
+3.17 Background runner
+
+MVP can use a simple Python loop.
+
+while True:
+    find active ICPs
+    run selected pipeline
+    sleep
+
+Better MVP:
+
+manual trigger from UI
+plus scheduled daily run
+
+Suggested schedule:
+
+company discovery: daily
+company enrichment: hourly
+contact enrichment: hourly
+draft generation: daily
+feedback ingestion: daily
+3.18 Queue model for SQLite
+
+SQLite does not need a complex queue at first.
+
+Use status fields:
+
+companies.status = discovered
+contacts.status = new
+lead_candidates.lead_status = qualified
+
+Each module picks records by status.
+
+Example:
+
+SELECT *
+FROM companies
+WHERE status = 'discovered'
+LIMIT 50;
+
+Then mark as:
+
+processing
+enriched
+failed
+3.19 Concurrency rule
+
+For SQLite MVP:
+
+single worker only
+
+Avoid parallel writes until needed.
+
+Later:
+
+multiple workers
+PostgreSQL
+real queue
+Redis/RQ/Celery
+3.20 Logging rules
+
+Every module should log:
+
+started
+finished
+number of inputs
+number of outputs
+number failed
+provider used
+error message
+important decisions
+
+Logs go to:
+
+pipeline_runs
+pipeline_run_steps
+module_logs
+3.21 Minimal API endpoints
+Pipeline
+POST /api/pipeline/run
+GET /api/pipeline/runs
+GET /api/pipeline/runs/{id}
+ICP
+POST /api/icps
+GET /api/icps
+GET /api/icps/{id}
+PUT /api/icps/{id}
+Leads
+GET /api/leads
+GET /api/leads/{id}
+PUT /api/leads/{id}/approve
+PUT /api/leads/{id}/reject
+Drafts
+GET /api/drafts
+PUT /api/drafts/{id}
+POST /api/drafts/{id}/approve
+Export
+GET /api/export/leads.csv
+3.22 MVP pipeline
+
+Build the first version like this:
+
+1. Manual ICP
+2. Manual/import company list
+3. Website enrichment
+4. Contact import/discovery
+5. Signal extraction
+6. Scoring
+7. Draft generation
+8. CSV export
+
+Do not start with fully autonomous scraping.
+Start with reliable data flow.
+
+3.23 Build order
+Phase 1: Pipeline foundation
+
+Build:
+
+PipelineContext
+ModuleResult
+PipelineModule base class
+PipelineOrchestrator
+pipeline_runs logging
+pipeline_run_steps logging
+module_logs
+
+Goal:
+
+Run dummy modules end-to-end.
+Phase 2: Manual/import inputs
+
+Build:
+
+ICP create/edit
+CSV company import
+CSV contact import
+deduplication
+suppression
+
+Goal:
+
+Get real data into the system.
+Phase 3: Core intelligence
+
+Build:
+
+signal extraction
+scoring
+research summary
+email draft generation
+quality control
+
+Goal:
+
+Produce outreach-ready drafts.
+Phase 4: Enrichment providers
+
+Add:
+
+website scraper
+Apify company discovery
+contact provider
+email validation provider
+tech stack provider
+
+Goal:
+
+Reduce manual data work.
+Phase 5: Feedback loop
+
+Add:
+
+campaign event import
+reply classification
+knowledge update
+message improvement
+
+Goal:
+
+Make Campaign 2 smarter than Campaign 1.
+3.24 First modules to implement
+
+Start with these:
+
+1. CSVCompanyImportModule
+2. CSVContactImportModule
+3. DeduplicationModule
+4. SignalExtractionModule
+5. ScoringModule
+6. ResearchSummaryModule
+7. EmailDraftModule
+8. QualityControlModule
+9. ExportModule
+
+This gives you a working MVP without waiting for scraping APIs.
+
+3.25 Definition of done
+
+This architecture is complete when:
+
+A project has an ICP
+A company list can be imported
+Contacts can be imported or discovered
+Signals can be extracted
+Leads can be scored
+Drafts can be generated
+Bad leads are filtered
+Ready leads can be exported
+Runs are logged
+Modules can be replaced

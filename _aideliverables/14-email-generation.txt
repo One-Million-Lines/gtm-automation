@@ -1,0 +1,587 @@
+14. Email draft generation module
+14.1 Purpose
+
+Generate the first outreach email for each qualified lead.
+
+This module turns:
+
+ICP + lead research + signals + knowledge
+
+into:
+
+subject line + personalized email body
+
+The output should be good enough for human review and, later, semi-automatic sending.
+
+14.2 Main output
+
+Writes to:
+
+email_drafts
+
+Also updates:
+
+lead_candidates.lead_status
+
+Recommended statuses:
+
+draft_created
+draft_failed
+needs_review
+14.3 Input
+
+Reads from:
+
+lead_candidates
+lead_research
+companies
+contacts
+signals
+signal_evidence
+icps
+knowledge_items
+email_drafts
+campaign_events
+
+Minimum required:
+
+qualified lead
+company
+contact
+ICP
+at least one signal
+research brief
+14.4 What this module should not do
+
+Do not:
+
+send email
+mark lead ready by itself
+ignore quality control
+invent personalization
+overwrite approved drafts
+
+Sending/export happens later.
+
+Quality control happens in module 15.
+
+14.5 Draft types
+
+Support multiple draft types:
+
+first_touch
+follow_up_1
+follow_up_2
+breakup
+linkedin_connection
+linkedin_message
+
+MVP:
+
+first_touch only
+14.6 Email structure
+
+Recommended structure:
+
+Subject
+
+Hi {{first_name}},
+
+Personalized opener based on real signal.
+
+Short relevance statement.
+
+Soft value proposition.
+
+Simple CTA.
+
+Example:
+
+Subject: quick idea for lifecycle workflows
+
+Hi Sarah,
+
+Saw that Example Store appears to use Klaviyo and is investing in lifecycle marketing.
+
+We help ecommerce teams automate more of the CRM execution layer without losing control over the workflows.
+
+Worth a quick look?
+14.7 Draft generation rules
+
+The email must be:
+
+short
+specific
+plain text
+low hype
+easy to reply to
+based only on verified evidence
+
+Avoid:
+
+long intros
+fake compliments
+too many claims
+buzzwords
+aggressive CTAs
+generic AI tone
+over-personalization
+14.8 Required output format
+
+AI should return JSON only:
+
+{
+  "subject": "",
+  "body": "",
+  "personalization_notes": [],
+  "source_evidence": [],
+  "risk_notes": [],
+  "confidence_score": 0.0
+}
+14.9 Email draft prompt
+You write concise B2B cold outreach emails.
+
+Given:
+- ICP
+- company profile
+- contact profile
+- research brief
+- verified signals
+- source evidence
+- relevant knowledge items
+- product value proposition
+- style rules
+
+Write one first-touch email.
+
+Return JSON only:
+{
+  "subject": "",
+  "body": "",
+  "personalization_notes": [],
+  "source_evidence": [],
+  "risk_notes": [],
+  "confidence_score": 0.0
+}
+
+Rules:
+- Keep the email under 90 words.
+- Use plain text.
+- Do not use hype.
+- Do not use unsupported claims.
+- Do not say "I noticed" if the evidence is weak.
+- Do not pretend the person has a problem unless evidence supports it.
+- Use cautious wording for inferred signals.
+- Mention only one main signal.
+- CTA should be soft and easy to answer.
+- Do not use em dashes.
+- Do not use fake familiarity.
+14.10 Input context example
+{
+  "icp": {
+    "name": "DTC ecommerce using Klaviyo",
+    "pain_points": [
+      "manual CRM execution",
+      "limited automation control",
+      "high platform complexity"
+    ],
+    "value_proposition": "AI workflows for email, calendar and task execution",
+    "outreach_angle": "reduce manual lifecycle work without losing control"
+  },
+  "company": {
+    "name": "Example Store",
+    "industry": "DTC skincare ecommerce",
+    "domain": "examplestore.com"
+  },
+  "contact": {
+    "first_name": "Sarah",
+    "job_title": "Head of CRM",
+    "normalized_role": "crm_lead"
+  },
+  "research": {
+    "recommended_angle": "Position as a way to reduce manual lifecycle work without forcing a full migration.",
+    "risks_or_unknowns": [
+      "Klaviyo usage is based on script detection only."
+    ]
+  },
+  "signals": [
+    {
+      "signal_name": "Uses Klaviyo",
+      "confidence_score": 0.9,
+      "evidence": [
+        "Homepage HTML contains klaviyo.com script."
+      ]
+    }
+  ],
+  "knowledge": [
+    {
+      "type": "objection",
+      "summary": "Klaviyo users often worry about migration effort."
+    }
+  ]
+}
+14.11 Example output
+{
+  "subject": "quick idea for crm workflows",
+  "body": "Hi Sarah,\n\nSaw Example Store appears to use Klaviyo.\n\nWe help ecommerce teams automate more of the CRM execution layer without forcing a full platform migration or giving up control over workflows.\n\nWorth a quick look?",
+  "personalization_notes": [
+    "References Klaviyo usage signal",
+    "Uses CRM workflow angle for Head of CRM persona"
+  ],
+  "source_evidence": [
+    {
+      "claim": "Example Store appears to use Klaviyo",
+      "source_type": "website_html",
+      "confidence": 0.9
+    }
+  ],
+  "risk_notes": [
+    "Klaviyo usage should be phrased cautiously because it is based on script detection."
+  ],
+  "confidence_score": 0.82
+}
+14.12 Draft variants
+
+Generate 1 to 3 variants per lead.
+
+MVP:
+
+1 draft only
+
+Later:
+
+variant A: direct pain
+variant B: signal-based
+variant C: competitor displacement
+
+Add optional field:
+
+ALTER TABLE email_drafts ADD COLUMN variant_name TEXT;
+
+Examples:
+
+signal_based
+problem_based
+soft_intro
+competitor_angle
+14.13 Personalization levels
+
+Support configurable personalization.
+
+Level 1: Light
+company name + persona angle
+Level 2: Signal-based
+company name + verified signal
+Level 3: Research-based
+company name + verified signal + role-specific angle
+
+MVP should use:
+
+Level 2
+14.14 Draft safety rules
+
+Reject or flag drafts if they include:
+
+unsupported claims
+too much flattery
+fake familiarity
+long paragraphs
+multiple unrelated signals
+spam trigger phrases
+false urgency
+overpromising
+
+Examples to avoid:
+
+“I saw you are struggling with Klaviyo.”
+“Your email marketing is probably underperforming.”
+“We guarantee better revenue.”
+“I loved your amazing brand.”
+
+Better:
+
+“Noticed your site appears to use Klaviyo.”
+“Thought this might be relevant if lifecycle workflows are a priority.”
+14.15 Knowledge base usage
+
+Before drafting, retrieve:
+
+winning messages
+objections
+competitor notes
+persona insights
+draft rules
+
+Example:
+
+For a lead:
+
+Contact: Head of CRM
+Signal: Uses Klaviyo
+
+Retrieve:
+
+Klaviyo objections
+CRM persona insights
+winning messages for ecommerce ICP
+
+Use knowledge to:
+
+choose angle
+avoid weak claims
+handle objections subtly
+select CTA
+14.16 Draft generation flow
+1. Load qualified leads
+2. Skip leads with approved draft
+3. Load research brief
+4. Load signals and evidence
+5. Load relevant knowledge
+6. Build prompt context
+7. Generate JSON draft
+8. Validate response
+9. Save draft
+10. Mark lead as draft_created
+11. Log result
+14.17 Pseudocode
+class EmailDraftGenerationModule(PipelineModule):
+    name = "email_draft_generation"
+
+    def run(self, context):
+        leads = lead_repo.get_for_draft_generation(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 100)
+        )
+
+        created = 0
+        skipped = 0
+        failed = 0
+
+        for lead in leads:
+            try:
+                if email_draft_repo.has_approved_draft(lead.id):
+                    skipped += 1
+                    continue
+
+                research = research_repo.get_latest_passed(lead.id)
+                if not research:
+                    lead_repo.update_status(lead.id, "needs_research")
+                    skipped += 1
+                    continue
+
+                signals = signal_repo.get_for_lead(lead.id)
+                knowledge = knowledge_service.get_for_draft_generation(lead.id)
+
+                prompt_context = draft_context_builder.build(
+                    lead=lead,
+                    research=research,
+                    signals=signals,
+                    knowledge=knowledge
+                )
+
+                ai_result = ai_service.generate_json(
+                    prompt=prompt_builder.build(prompt_context),
+                    model=context.config.get("ai_model")
+                )
+
+                validated = draft_validator.validate(ai_result)
+
+                email_draft_repo.create(
+                    lead_candidate_id=lead.id,
+                    draft_type="first_touch",
+                    subject=validated["subject"],
+                    body=validated["body"],
+                    personalization_notes=json.dumps(validated["personalization_notes"]),
+                    source_evidence=json.dumps(validated["source_evidence"]),
+                    ai_model=context.config.get("ai_model"),
+                    prompt_version=context.config.get("prompt_version", "v1"),
+                    quality_score=None,
+                    quality_status="unchecked",
+                    approved=0
+                )
+
+                lead_repo.update_status(lead.id, "draft_created")
+                created += 1
+
+            except Exception as e:
+                lead_repo.update_status(lead.id, "draft_failed")
+                log_error(e, lead.id)
+                failed += 1
+
+        return ModuleResult(
+            success=True,
+            input_count=len(leads),
+            output_count=created,
+            failed_count=failed,
+            data={"skipped": skipped}
+        )
+14.18 Database additions
+
+Current email_drafts table is enough.
+
+Recommended additions:
+
+ALTER TABLE email_drafts ADD COLUMN variant_name TEXT;
+ALTER TABLE email_drafts ADD COLUMN confidence_score REAL;
+ALTER TABLE email_drafts ADD COLUMN risk_notes TEXT;
+ALTER TABLE email_drafts ADD COLUMN status TEXT DEFAULT 'active';
+
+Optional later:
+
+ALTER TABLE email_drafts ADD COLUMN context_hash TEXT;
+
+Use context_hash to avoid regenerating same draft if lead context did not change.
+
+14.19 Draft overwrite rules
+
+Never overwrite:
+
+approved drafts
+manually edited drafts
+exported drafts
+sent drafts
+
+Create a new draft version if:
+
+research changed
+new strong signal appeared
+quality failed
+user requested regeneration
+
+Optional addition:
+
+ALTER TABLE email_drafts ADD COLUMN version INTEGER DEFAULT 1;
+ALTER TABLE email_drafts ADD COLUMN parent_draft_id INTEGER;
+14.20 Draft validation
+
+Before saving, basic checks:
+
+subject exists
+body exists
+body under word limit
+contains contact first name if available
+contains company name or relevant context
+does not contain unsupported claims
+has source_evidence
+
+Module 15 does deeper quality control.
+
+14.21 Config example
+{
+  "email_draft_generation": {
+    "enabled": true,
+    "limit": 100,
+    "draft_type": "first_touch",
+    "variants_per_lead": 1,
+    "personalization_level": "signal_based",
+    "max_words": 90,
+    "skip_if_approved_draft_exists": true,
+    "require_research": true,
+    "require_signal": true,
+    "ai_model": "gpt-4o-mini",
+    "prompt_version": "v1",
+    "style_rules": {
+      "no_em_dash": true,
+      "plain_text": true,
+      "soft_cta": true
+    }
+  }
+}
+14.22 API endpoints
+Run draft generation
+POST /api/email-drafts/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 100,
+  "draft_type": "first_touch"
+}
+Generate draft for one lead
+POST /api/leads/{lead_candidate_id}/draft
+Get drafts for a lead
+GET /api/leads/{lead_candidate_id}/drafts
+Regenerate draft
+POST /api/email-drafts/{draft_id}/regenerate
+Edit draft
+PUT /api/email-drafts/{draft_id}
+Approve draft
+POST /api/email-drafts/{draft_id}/approve
+14.23 Frontend screens
+Draft queue
+
+Columns:
+
+Company
+Contact
+Signal
+Lead score
+Draft status
+Quality status
+Created at
+
+Actions:
+
+view
+edit
+regenerate
+approve
+reject
+send to QC
+Draft detail page
+
+Sections:
+
+Email subject
+Email body
+Research brief
+Signals used
+Source evidence
+Knowledge used
+Risk notes
+Quality status
+14.24 MVP build order
+Step 1
+
+Build lead selector:
+
+qualified leads with research brief and no approved draft
+Step 2
+
+Build draft context builder.
+
+Step 3
+
+Build AI JSON prompt.
+
+Step 4
+
+Validate generated JSON.
+
+Step 5
+
+Save draft to email_drafts.
+
+Step 6
+
+Add draft UI.
+
+Step 7
+
+Add regenerate/edit/approve actions.
+
+14.25 Definition of done
+
+This module is complete when:
+
+Qualified leads can receive email drafts
+Drafts use ICP, research, signals, evidence, and knowledge
+Drafts are short and plain text
+Drafts avoid unsupported claims
+Approved drafts are not overwritten
+Drafts are saved with personalization notes and evidence
+Drafts can be reviewed, edited, regenerated, and approved
+Drafts are ready for quality control

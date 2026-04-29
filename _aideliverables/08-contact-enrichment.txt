@@ -1,0 +1,575 @@
+8. Contact enrichment & validation module
+8.1 Purpose
+
+Take discovered contacts and make them outreach-usable.
+
+Contact discovery says:
+
+This person probably matches the ICP.
+
+Contact enrichment answers:
+
+Can we contact this person, and how confident are we?
+
+Main output:
+
+contact with email + validation status + confidence + source evidence
+8.2 Input
+
+Reads from:
+
+contacts
+contact_sources
+companies
+icps
+lead_candidates
+suppression_list
+
+Typical input:
+
+{
+  "contact_id": 44,
+  "company_id": 12,
+  "full_name": "Sarah Miller",
+  "job_title": "Head of CRM",
+  "normalized_role": "crm_lead",
+  "linkedin_url": "https://linkedin.com/in/sarahmiller",
+  "email": null,
+  "email_status": "unknown"
+}
+8.3 Output
+
+Writes to:
+
+contacts
+contact_enrichment
+lead_candidates
+module_logs
+
+Enriched output:
+
+{
+  "email": "sarah@example.com",
+  "email_status": "valid",
+  "email_confidence": 0.93,
+  "linkedin_url": "https://linkedin.com/in/sarahmiller",
+  "job_title": "Head of CRM",
+  "source": "hunter",
+  "validation_provider": "zerobounce"
+}
+8.4 What this module should not do
+
+Do not:
+
+generate drafts
+score full leads
+send emails
+decide final campaign selection alone
+
+It updates data quality, which the scoring module uses later.
+
+8.5 Enrichment providers
+MVP providers
+
+Start with:
+
+manual CSV import
+email pattern guessing
+basic domain validation
+simple SMTP/email validation API
+Later providers
+
+Add:
+
+Hunter
+Apollo
+Snov
+Findymail
+Prospeo
+Dropcontact
+People Data Labs
+Clearbit
+NeverBounce
+ZeroBounce
+MillionVerifier
+Bouncer
+8.6 Provider architecture
+
+Use separate providers for:
+
+email finding
+email validation
+profile enrichment
+
+Example interfaces:
+
+class EmailFinderProvider:
+    name: str
+
+    def find_email(self, contact, company, config) -> dict | None:
+        pass
+
+
+class EmailValidationProvider:
+    name: str
+
+    def validate_email(self, email, config) -> dict:
+        pass
+
+
+class ContactProfileProvider:
+    name: str
+
+    def enrich_profile(self, contact, company, config) -> dict | None:
+        pass
+8.7 Module folder structure
+/backend/modules/contact_enrichment
+  module.py
+  contracts.py
+  normalizer.py
+  email_pattern_generator.py
+  email_status_mapper.py
+  providers/
+    csv_provider.py
+    hunter_provider.py
+    apollo_provider.py
+    zerobounce_provider.py
+    neverbounce_provider.py
+    pattern_guess_provider.py
+  tests/
+8.8 Main flow
+1. Load qualified contacts missing valid email
+2. Load company domain
+3. Run email finder providers
+4. Normalize found emails
+5. Validate email
+6. Map provider status to internal status
+7. Save contact enrichment snapshot
+8. Update contact record
+9. Update lead candidate data quality
+10. Log result
+8.9 Pseudocode
+class ContactEnrichmentModule(PipelineModule):
+    name = "contact_enrichment"
+
+    def run(self, context):
+        contacts = contact_repo.get_for_enrichment(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 100)
+        )
+
+        enriched = 0
+        failed = 0
+
+        for contact in contacts:
+            try:
+                company = company_repo.get(contact.company_id)
+
+                email_result = self.find_best_email(contact, company, context.config)
+
+                if not email_result:
+                    contact_repo.update_email_status(contact.id, "not_found")
+                    continue
+
+                validation_result = self.validate_email(
+                    email_result["email"],
+                    context.config
+                )
+
+                internal_status = map_email_status(validation_result)
+
+                contact_enrichment_repo.create(
+                    contact_id=contact.id,
+                    provider=email_result["provider"],
+                    email=email_result["email"],
+                    email_status=internal_status,
+                    email_confidence=validation_result["confidence"],
+                    job_title=contact.job_title,
+                    linkedin_url=contact.linkedin_url,
+                    raw_data=json.dumps({
+                        "email_result": email_result,
+                        "validation_result": validation_result
+                    })
+                )
+
+                contact_repo.update_email(
+                    contact_id=contact.id,
+                    email=email_result["email"],
+                    email_status=internal_status,
+                    email_confidence=validation_result["confidence"]
+                )
+
+                enriched += 1
+
+            except Exception as e:
+                failed += 1
+                log_error(e, contact.id)
+
+        return ModuleResult(
+            success=True,
+            input_count=len(contacts),
+            output_count=enriched,
+            failed_count=failed
+        )
+8.10 Internal email statuses
+
+Use one consistent internal status model.
+
+unknown
+valid
+risky
+invalid
+catch_all
+not_found
+blocked
+suppressed
+
+Meaning:
+
+valid      → safe to use
+risky      → maybe usable, needs score/context
+catch_all  → domain accepts all emails, needs caution
+invalid    → do not use
+not_found  → no email found
+blocked    → provider could not check
+suppressed → excluded from outreach
+8.11 Provider status mapping
+
+Different tools return different labels. Normalize them.
+
+Example:
+
+STATUS_MAP = {
+    "valid": "valid",
+    "deliverable": "valid",
+    "safe_to_send": "valid",
+
+    "accept_all": "catch_all",
+    "catch_all": "catch_all",
+
+    "risky": "risky",
+    "unknown": "risky",
+
+    "undeliverable": "invalid",
+    "invalid": "invalid",
+
+    "not_found": "not_found"
+}
+8.12 Email finding methods
+1. Provider lookup
+
+Input:
+
+first name
+last name
+domain
+company name
+linkedin_url
+
+Output:
+
+email + confidence
+2. Pattern guessing
+
+Use common patterns:
+
+first@domain.com
+first.last@domain.com
+flast@domain.com
+firstl@domain.com
+last@domain.com
+
+Example:
+
+Sarah Miller + example.com
+→ sarah@example.com
+→ sarah.miller@example.com
+→ smiller@example.com
+
+Only keep guessed email if validation passes.
+
+3. Domain email discovery
+
+Some providers return multiple company emails.
+
+Example:
+
+info@example.com
+hello@example.com
+sarah@example.com
+
+Prefer person-specific emails over generic ones.
+
+Avoid:
+
+info@
+hello@
+support@
+sales@
+admin@
+contact@
+
+Unless configured.
+
+8.13 Email validation rules
+
+Validation should check:
+
+syntax
+domain exists
+MX records exist
+deliverability
+catch-all
+disposable email
+role-based email
+free email domain
+
+MVP can start with:
+
+syntax + domain + MX
+
+Later add external validation provider.
+
+8.14 Data quality scoring
+
+Contact data quality should consider:
+
+email status
+email confidence
+LinkedIn exists
+job title exists
+role match confidence
+source quality
+
+Example:
+
+valid email: +40
+catch_all: +25
+risky: +15
+linkedin_url: +20
+exact persona match: +25
+trusted source: +15
+
+Normalize to:
+
+0–100
+
+This updates:
+
+lead_candidates.data_quality_score
+8.15 Contact update rules
+
+Only overwrite contact email if new data is better.
+
+Priority:
+
+valid > catch_all > risky > unknown > not_found > invalid
+
+If existing email is valid:
+
+do not overwrite
+
+If new email is valid and old is risky:
+
+overwrite
+
+If two providers disagree:
+
+keep highest confidence
+store both in contact_enrichment
+8.16 Suppression checks
+
+Before saving or using an email:
+
+check suppression_list
+
+Suppress if:
+
+email is unsubscribed
+email bounced before
+domain is excluded
+company is competitor
+contact manually rejected
+
+If suppressed:
+
+contacts.email_status = suppressed
+contacts.status = suppressed
+lead_candidates.lead_status = suppressed
+8.17 Generic email handling
+
+Generic emails should usually not be used for personalized cold outreach.
+
+Examples:
+
+info@
+hello@
+support@
+sales@
+contact@
+office@
+admin@
+
+Rules:
+
+if generic email + no person name → reject
+if generic email + named contact → mark risky
+if ICP allows company-level outreach → allow with lower score
+8.18 B2B role relevance check
+
+Sometimes enrichment providers return contacts outside your ICP.
+
+Example:
+
+Store Manager
+Customer Support
+Software Engineer
+
+Before updating lead:
+
+rerun role matcher
+
+If no longer matches:
+
+contact.status = rejected
+lead_candidate.lead_status = rejected
+8.19 Module config example
+{
+  "contact_enrichment": {
+    "enabled": true,
+    "limit": 100,
+    "allow_catch_all": true,
+    "allow_risky": false,
+    "allow_generic_emails": false,
+    "providers": {
+      "csv": {
+        "enabled": true
+      },
+      "pattern_guess": {
+        "enabled": true
+      },
+      "hunter": {
+        "enabled": false,
+        "api_key_env": "HUNTER_API_KEY"
+      },
+      "zerobounce": {
+        "enabled": false,
+        "api_key_env": "ZEROBOUNCE_API_KEY"
+      }
+    }
+  }
+}
+8.20 API endpoints
+Run contact enrichment
+POST /api/contact-enrichment/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 100,
+  "providers": ["pattern_guess", "hunter", "zerobounce"]
+}
+Upload enriched contacts CSV
+POST /api/contact-enrichment/upload
+
+Expected columns:
+
+company_domain
+full_name
+email
+email_status
+linkedin_url
+job_title
+source
+Validate one email
+POST /api/contact-enrichment/validate-email
+
+Body:
+
+{
+  "email": "sarah@example.com"
+}
+Get contacts needing enrichment
+GET /api/contacts?email_status=unknown
+8.21 Frontend screens
+Contact enrichment queue
+
+Columns:
+
+Name
+Company
+Role
+LinkedIn
+Current email
+Email status
+Confidence
+Last enriched
+
+Actions:
+
+enrich
+validate
+reject
+suppress
+approve
+Contact detail
+
+Sections:
+
+Profile
+Company
+Role match
+Emails found
+Validation results
+Source evidence
+History
+8.22 MVP build order
+Step 1
+
+Build contact selection:
+
+contacts where status = qualified and email_status is unknown/null
+Step 2
+
+Build email syntax/domain/MX validation.
+
+Step 3
+
+Build CSV enriched contact import.
+
+Step 4
+
+Build pattern guess provider.
+
+Step 5
+
+Save enrichment snapshots.
+
+Step 6
+
+Update contact email status/confidence.
+
+Step 7
+
+Update lead data quality score.
+
+Step 8
+
+Add external provider later.
+
+8.23 Definition of done
+
+This module is complete when:
+
+Qualified contacts can be enriched
+Emails can be found or imported
+Emails are normalized
+Emails are validated
+Internal email statuses are consistent
+Suppressed emails are skipped
+Contact enrichment history is stored
+Lead data quality score is updated
+Contacts are ready for scoring and outreach draft generation

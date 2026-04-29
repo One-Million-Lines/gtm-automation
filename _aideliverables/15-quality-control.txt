@@ -1,0 +1,526 @@
+15. Quality control module
+15.1 Purpose
+
+Check if a generated outreach draft is safe, useful, and ready to export.
+
+This module answers:
+
+Can this draft be sent without embarrassing us?
+
+It protects against:
+
+fake personalization
+unsupported claims
+spammy language
+bad fit
+weak CTAs
+duplicate messaging
+missing evidence
+15.2 Main output
+
+Updates:
+
+email_drafts.quality_score
+email_drafts.quality_status
+lead_candidates.ready_for_outreach
+lead_candidates.lead_status
+
+Recommended statuses:
+
+passed
+failed
+needs_review
+15.3 Input
+
+Reads from:
+
+email_drafts
+lead_candidates
+lead_research
+companies
+contacts
+signals
+signal_evidence
+icps
+knowledge_items
+suppression_list
+campaign_events
+15.4 What it checks
+1. Data readiness
+
+Required:
+
+contact exists
+email exists
+email_status is valid or acceptable
+company domain exists
+lead is not suppressed
+lead score is high enough
+2. Draft completeness
+
+Required:
+
+subject exists
+body exists
+body is not too long
+CTA exists
+contact first name is used if available
+3. Evidence safety
+
+Checks:
+
+personalization is backed by source evidence
+claims are not invented
+competitor usage is phrased cautiously if confidence is low
+no unsupported pain claims
+
+Bad:
+
+I saw you are unhappy with Klaviyo.
+
+Good:
+
+Saw your site appears to use Klaviyo.
+4. Spam and tone
+
+Reject or flag:
+
+too salesy
+too long
+too many buzzwords
+fake urgency
+guarantees
+overpromising
+too many links
+too many exclamation marks
+5. Duplication
+
+Check:
+
+same contact has approved draft already
+same company has been contacted recently
+same body reused too many times
+same subject reused too many times
+6. Compliance / suppression
+
+Block if:
+
+unsubscribed
+bounced
+existing customer
+competitor
+manual suppression
+already contacted inside cooldown
+15.5 Quality score
+
+Score from 0 to 100.
+
+Suggested components:
+
+data readiness: 25
+evidence support: 25
+personalization quality: 20
+tone/spam safety: 15
+CTA clarity: 10
+uniqueness: 5
+
+Pass:
+
+80–100 → passed
+60–79 → needs_review
+0–59 → failed
+15.6 Detailed scoring
+Data readiness, 25 pts
+valid email: +10
+contact role exists: +5
+company domain exists: +5
+lead score above threshold: +5
+
+If suppressed:
+
+force score = 0
+quality_status = failed
+Evidence support, 25 pts
+source evidence exists: +10
+main personalization claim has evidence: +10
+signal confidence >= 0.7: +5
+Personalization quality, 20 pts
+mentions relevant company/contact context: +8
+uses one clear signal: +7
+persona-specific angle: +5
+Tone/spam safety, 15 pts
+under max word count: +5
+plain language: +5
+no spam triggers/hype: +5
+CTA clarity, 10 pts
+has clear CTA: +6
+CTA is soft and easy to answer: +4
+Uniqueness, 5 pts
+not duplicate: +5
+15.7 Hard fail rules
+
+Immediately fail if:
+
+lead is suppressed
+email is invalid
+draft has no body
+draft has no subject
+draft claims unsupported pain
+draft says false/fake personalization
+draft includes banned wording
+draft exceeds max word count by too much
+
+Example banned claims:
+
+you are struggling with
+you are unhappy with
+your team is wasting time
+I saw you need
+guaranteed revenue
+
+Unless directly supported by source evidence.
+
+15.8 Needs review rules
+
+Mark as needs_review if:
+
+email is catch_all
+signal confidence is medium
+personalization is weak
+research confidence is low
+draft is generic but usable
+source evidence is indirect
+15.9 Quality result structure
+
+Use this internal structure:
+
+{
+  "quality_score": 84,
+  "quality_status": "passed",
+  "checks": {
+    "data_readiness": 25,
+    "evidence_support": 22,
+    "personalization_quality": 17,
+    "tone_spam_safety": 15,
+    "cta_clarity": 10,
+    "uniqueness": 5
+  },
+  "issues": [],
+  "recommendations": []
+}
+
+For failed draft:
+
+{
+  "quality_score": 42,
+  "quality_status": "failed",
+  "issues": [
+    "Main personalization claim is unsupported",
+    "Email says prospect is unhappy with Klaviyo, but evidence only shows Klaviyo script detected"
+  ],
+  "recommendations": [
+    "Change wording to: your site appears to use Klaviyo"
+  ]
+}
+15.10 Recommended new table
+
+Keep history of QC checks.
+
+CREATE TABLE draft_quality_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    email_draft_id INTEGER NOT NULL,
+    lead_candidate_id INTEGER NOT NULL,
+
+    quality_score REAL,
+    quality_status TEXT,
+
+    issues TEXT,
+    recommendations TEXT,
+    checks_json TEXT,
+
+    checked_by TEXT,
+    ai_model TEXT,
+    prompt_version TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (email_draft_id) REFERENCES email_drafts(id),
+    FOREIGN KEY (lead_candidate_id) REFERENCES lead_candidates(id)
+);
+
+This is useful because drafts may be edited and rechecked.
+
+15.11 Rule-based QC vs AI QC
+
+Use both.
+
+Rule-based QC
+
+Good for:
+
+missing fields
+word count
+email status
+suppression
+duplicate checks
+banned phrases
+max links
+AI QC
+
+Good for:
+
+unsupported claims
+tone quality
+personalization quality
+CTA strength
+hallucination risk
+
+MVP:
+
+rule-based QC first
+AI QC second
+15.12 AI QC prompt
+You are reviewing a cold outreach email for quality and safety.
+
+Given:
+- ICP
+- company data
+- contact data
+- research brief
+- verified signals
+- source evidence
+- email draft
+
+Return JSON only:
+{
+  "quality_status": "passed|needs_review|failed",
+  "quality_score": 0,
+  "issues": [],
+  "recommendations": [],
+  "unsupported_claims": [],
+  "spam_risks": [],
+  "personalization_score": 0,
+  "evidence_score": 0,
+  "tone_score": 0,
+  "cta_score": 0
+}
+
+Rules:
+- Be strict.
+- Flag any claim not supported by evidence.
+- Do not reward generic personalization.
+- Penalize hype, fake urgency, vague buzzwords, or overpromising.
+- If the draft claims a pain, require direct evidence.
+- If the evidence is indirect, suggest cautious wording.
+15.13 Module structure
+/backend/modules/quality_control
+  module.py
+  contracts.py
+  rule_checker.py
+  ai_checker.py
+  score_calculator.py
+  readiness_resolver.py
+  duplicate_checker.py
+  banned_phrases.py
+  tests/
+15.14 Main flow
+1. Load unchecked drafts
+2. Load lead context
+3. Run suppression checks
+4. Run rule-based checks
+5. Run AI checks
+6. Combine scores
+7. Save quality check history
+8. Update email_drafts
+9. Update lead readiness
+10. Log result
+15.15 Pseudocode
+class QualityControlModule(PipelineModule):
+    name = "quality_control"
+
+    def run(self, context):
+        drafts = email_draft_repo.get_unchecked(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 100)
+        )
+
+        passed = 0
+        needs_review = 0
+        failed = 0
+
+        for draft in drafts:
+            lead = lead_repo.get(draft.lead_candidate_id)
+
+            rule_result = rule_checker.check(draft, lead)
+
+            if rule_result.hard_fail:
+                final_result = rule_result
+            else:
+                ai_result = ai_checker.check(draft, lead)
+                final_result = score_calculator.combine(rule_result, ai_result)
+
+            quality_check_repo.create(
+                email_draft_id=draft.id,
+                lead_candidate_id=lead.id,
+                quality_score=final_result.score,
+                quality_status=final_result.status,
+                issues=json.dumps(final_result.issues),
+                recommendations=json.dumps(final_result.recommendations),
+                checks_json=json.dumps(final_result.checks)
+            )
+
+            email_draft_repo.update_quality(
+                draft_id=draft.id,
+                quality_score=final_result.score,
+                quality_status=final_result.status
+            )
+
+            readiness_resolver.update_lead_readiness(lead.id)
+
+            if final_result.status == "passed":
+                passed += 1
+            elif final_result.status == "needs_review":
+                needs_review += 1
+            else:
+                failed += 1
+
+        return ModuleResult(
+            success=True,
+            input_count=len(drafts),
+            output_count=passed,
+            failed_count=failed,
+            data={"needs_review": needs_review}
+        )
+15.16 Readiness resolver
+
+After QC, update lead readiness.
+
+A lead is ready only if:
+
+lead final_score >= threshold
+lead not suppressed
+contact email valid or allowed
+draft quality_status = passed
+draft approved or approval not required
+
+Recommended MVP:
+
+require human approval before export
+
+So:
+
+quality passed + approved = ready_for_outreach = 1
+quality passed + not approved = needs_review
+15.17 Config example
+{
+  "quality_control": {
+    "enabled": true,
+    "limit": 100,
+    "require_human_approval": true,
+    "min_quality_score": 80,
+    "needs_review_min_score": 60,
+    "max_words": 90,
+    "max_links": 1,
+    "allow_catch_all_email": true,
+    "allow_risky_email": false,
+    "require_source_evidence": true,
+    "use_ai_checker": true,
+    "ai_model": "gpt-4o-mini",
+    "prompt_version": "v1"
+  }
+}
+15.18 API endpoints
+Run QC
+POST /api/quality-control/run
+Check one draft
+POST /api/email-drafts/{draft_id}/quality-check
+Get QC history
+GET /api/email-drafts/{draft_id}/quality-checks
+Approve draft
+POST /api/email-drafts/{draft_id}/approve
+Reject draft
+POST /api/email-drafts/{draft_id}/reject
+15.19 Frontend screens
+Quality review queue
+
+Columns:
+
+Company
+Contact
+Email status
+Lead score
+Draft quality
+QC status
+Issues
+Approved
+
+Actions:
+
+view draft
+edit
+rerun QC
+approve
+reject
+regenerate
+Draft quality detail
+
+Sections:
+
+Email draft
+Quality score
+Failed checks
+Unsupported claims
+Spam risks
+Recommendations
+Source evidence
+Research brief
+15.20 MVP build order
+Step 1
+
+Create draft_quality_checks table.
+
+Step 2
+
+Build rule-based checker.
+
+Step 3
+
+Add banned phrase checks.
+
+Step 4
+
+Add evidence presence checks.
+
+Step 5
+
+Update draft quality status.
+
+Step 6
+
+Update lead readiness.
+
+Step 7
+
+Add AI checker.
+
+Step 8
+
+Add review UI.
+
+15.21 Definition of done
+
+This module is complete when:
+
+Every draft can be quality checked
+Suppressed leads are blocked
+Invalid emails are blocked
+Unsupported claims are flagged
+Spammy wording is flagged
+Weak personalization is flagged
+Quality score is stored
+QC history is stored
+Draft status is updated
+Lead readiness is updated
+Only safe approved leads become ready for outreach

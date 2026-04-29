@@ -1,0 +1,31 @@
+# Backend Dockerfile — GTM Automation API
+FROM python:3.13-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# System deps for bcrypt, lxml
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libxml2-dev libxslt1-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/pip_requirements.txt ./pip_requirements.txt
+RUN pip install -r pip_requirements.txt
+
+COPY backend/ ./
+
+RUN mkdir -p data logs
+
+ENV PYTHONPATH=/app \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=5220 \
+    SQLITE_DB=/app/data/gtm.sqlite
+
+EXPOSE 5220
+
+# Apply DB migrations on every boot then start uvicorn
+CMD ["sh", "-c", "python setup_database.py && uvicorn main:app --host 0.0.0.0 --port ${APP_PORT:-5220} --workers ${WORKERS:-2}"]

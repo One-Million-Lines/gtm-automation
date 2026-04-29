@@ -1,0 +1,280 @@
+1.1 Vision
+
+Build a self-improving outbound engine that continuously:
+
+Identifies ideal companies + contacts
+Understands why they are good prospects
+Generates high-quality, personalized outreach drafts
+Learns from outcomes and improves automatically
+
+The system runs continuously in the background and produces a ready-to-contact lead list with minimal manual work.
+
+1.2 Core Goal
+
+Output a structured dataset of:
+
+Qualified companies
+Relevant decision-makers
+Verified contact info
+Contextual signals (why now)
+AI-generated personalized email draft
+
+→ This becomes directly usable in tools like Instantly, Smartlead, or manual outreach.
+
+1.3 What “Ready for Outreach” Means
+
+A lead is “ready” only if all conditions are met:
+
+Company level
+Matches ICP (industry, size, geography, etc.)
+Has at least 1 valid signal (e.g. hiring, competitor usage, growth)
+Not already processed or excluded
+Contact level
+Correct persona (e.g. Head of CRM, Founder, Growth Lead)
+Valid email (or high confidence)
+LinkedIn profile (optional but preferred)
+Data quality
+No duplicates
+Not previously contacted
+Not blacklisted
+Context
+At least 1 clear reason to reach out
+Supporting evidence (source link, extracted text)
+Output
+Email draft generated
+Personalization included (company + signal-based)
+Passes quality checks
+1.4 Core Workflow (End-to-End)
+Step 1: Define ICP
+
+User defines:
+
+Target industries
+Company size
+Geography
+Personas
+Competitors
+Pain points
+Signals to detect
+Step 2: Discover companies
+
+System finds companies via:
+
+APIs / scrapers / datasets
+Search-based discovery
+Signal-based discovery (e.g. hiring, tools)
+Step 3: Enrich companies
+
+For each company:
+
+Website
+Industry
+Size
+Location
+Tech stack
+Signals (jobs, tools, reviews, etc.)
+Step 4: Find contacts
+
+For each company:
+
+Identify relevant roles
+Extract people (name, role, LinkedIn)
+Step 5: Enrich contacts
+Find email
+Validate email
+Assign confidence score
+Normalize job title
+Step 6: Extract signals
+
+AI + scraping identifies:
+
+Pain indicators
+Competitor usage
+Hiring intent
+Growth signals
+Relevant triggers
+Step 7: Score leads
+
+Each company + contact gets a score based on:
+
+ICP match
+Signal strength
+Persona fit
+Data completeness
+Step 8: Deduplicate & filter
+
+Remove:
+
+Existing leads
+Already contacted
+Low-quality entries
+Blacklisted domains
+Step 9: Generate research summary
+
+AI creates:
+
+What the company does
+Why it’s a fit
+What likely problem exists
+Outreach angle
+Step 10: Generate email draft
+
+AI produces:
+
+Subject line
+Opening line (personalized)
+Body based on signals + ICP
+CTA
+Step 11: Quality control
+
+System checks:
+
+No hallucinated claims
+Clear personalization
+Not generic
+Not spammy
+Step 12: Output to deliverable
+
+Final structured list:
+
+Company
+Contact
+Email
+LinkedIn
+Signals
+Score
+Draft
+Step 13: Feedback loop
+
+After campaigns:
+
+Import replies
+Classify responses
+Extract learnings
+Update knowledge base
+1.5 User Roles (Single Tenant for Now)
+Admin (you)
+Defines ICPs
+Reviews leads
+Edits drafts
+Approves output
+Monitors system
+Triggers runs manually if needed
+System (autonomous)
+Runs pipeline
+Fetches data
+Generates drafts
+Learns from feedback
+1.6 System Assumptions
+Single user / single workspace
+SQLite is sufficient for storage
+External APIs will be used (replaceable)
+AI is central for:
+signal extraction
+research
+messaging
+Pipeline runs asynchronously (not real-time UI driven)
+1.7 Constraints
+Technical
+Backend: Python
+Frontend: React
+Database: SQLite
+No distributed system (yet)
+Must be modular (swap providers easily)
+Data
+External APIs may fail or be rate-limited
+Data quality varies → must validate and score
+Some signals will be probabilistic
+AI
+Risk of hallucination → must verify outputs
+Cost constraints → batch processing preferred
+1.8 Data Sources (Pluggable)
+Company discovery
+Apify actors
+Google search scraping
+Directories (Clutch, G2, etc.)
+Job boards (hiring signals)
+Enrichment
+Clearbit / Apollo / custom scraping
+BuiltWith (tech stack)
+Website parsing
+Contacts
+Apollo / Hunter / Snov / scraping
+LinkedIn scraping (via Apify)
+Validation
+Email verification APIs
+Signals
+Reviews (G2, Capterra)
+Job posts
+Website content
+News
+Tech usage
+1.9 System Architecture Principles
+Modular
+
+Each step is isolated:
+
+Replace any module without breaking system
+Pipeline-based
+
+Linear but interruptible:
+
+Each stage writes outputs to DB
+Next stage reads from DB
+Stateful
+Everything persisted
+No recomputation if already processed
+Idempotent
+Same run won’t duplicate data
+Extensible
+
+Future:
+
+Multiple projects
+Multiple ICPs per project
+1.10 Output Definition (Final Deliverable)
+
+Each row must include:
+
+Company
+Name
+Domain
+Industry
+Size
+Location
+Contact
+Full name
+Job title
+Email
+LinkedIn
+Intelligence
+Signals detected
+Sources (links or text)
+AI summary
+Scoring
+Lead score
+Confidence level
+Outreach
+Email subject
+Email body
+Personalization highlights
+1.11 Success Criteria
+
+System is successful if:
+
+Produces high-quality leads daily without manual work
+Email drafts feel custom, not templated
+Each iteration improves:
+reply rates
+positive responses
+You stop doing manual list building entirely
+1.12 Future Extensions (Important for Design)
+
+Even if not built now:
+
+Multi-project support
+Multiple ICPs per project
+Multi-channel (LinkedIn, WhatsApp, calls)
+Team collaboration
+CRM sync
+Campaign execution layer

@@ -1,0 +1,23 @@
+[Unit]
+Description=GTM Automation API (FastAPI / uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/gtm-automation/backend
+EnvironmentFile=/opt/gtm-automation/backend/.env
+Environment="PYTHONPATH=/opt/gtm-automation/backend"
+ExecStartPre=/opt/gtm-automation/backend/.venv/bin/python setup_database.py
+ExecStart=/opt/gtm-automation/backend/.venv/bin/uvicorn main:app \
+    --host 127.0.0.1 \
+    --port 5220 \
+    --workers 2 \
+    --proxy-headers
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/gtm-api.log
+StandardError=append:/var/log/gtm-api.err.log
+
+[Install]
+WantedBy=multi-user.target

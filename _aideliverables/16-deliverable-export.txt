@@ -1,0 +1,529 @@
+16. Deliverable/export module
+16.1 Purpose
+
+Create the final output:
+
+contacts ready for outreach + approved email draft
+
+This module turns qualified, checked, approved leads into something usable in:
+
+CSV
+Google Sheets later
+Clay later
+Instantly later
+Smartlead later
+CRM later
+16.2 Core rule
+
+Export only leads where:
+
+ready_for_outreach = 1
+
+A lead should not export just because it has an email.
+
+16.3 Input
+
+Reads from:
+
+projects
+icps
+companies
+contacts
+lead_candidates
+email_drafts
+lead_research
+signals
+signal_evidence
+draft_quality_checks
+suppression_list
+campaigns
+campaign_events
+16.4 Output
+
+MVP output:
+
+CSV file
+
+Later outputs:
+
+Google Sheet
+Clay webhook
+Instantly CSV
+Smartlead CSV
+HubSpot CSV
+custom webhook
+16.5 Export-ready criteria
+
+A row can be exported only if:
+
+lead_candidates.ready_for_outreach = 1
+lead_candidates.lead_status in ready, qualified, draft_approved
+company is not suppressed
+contact is not suppressed
+email exists
+email_status is valid or allowed
+approved email draft exists
+draft quality_status = passed
+draft approved = 1
+not already exported, unless force_export = true
+16.6 Export fields
+Core fields
+project_name
+icp_name
+company_name
+domain
+website_url
+industry
+country
+city
+employee_count
+contact_name
+first_name
+last_name
+job_title
+normalized_role
+email
+email_status
+linkedin_url
+final_score
+lead_status
+Intelligence fields
+top_signal
+all_signals
+signal_sources
+qualification_summary
+research_summary
+recommended_angle
+personalization_notes
+source_evidence
+Email fields
+email_subject
+email_body
+draft_quality_score
+draft_id
+Operational fields
+lead_candidate_id
+company_id
+contact_id
+exported_at
+export_batch_id
+16.7 Recommended CSV columns
+lead_candidate_id
+company_name
+domain
+website_url
+industry
+country
+contact_name
+first_name
+last_name
+job_title
+email
+linkedin_url
+final_score
+top_signal
+signal_sources
+qualification_summary
+email_subject
+email_body
+source_evidence
+
+For Instantly/Smartlead-style tools:
+
+email
+first_name
+last_name
+company_name
+job_title
+website
+linkedin_url
+subject
+body
+custom_top_signal
+custom_reason
+custom_source_url
+16.8 Export batch table
+
+Add export tracking.
+
+CREATE TABLE export_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    export_type TEXT NOT NULL,
+    destination TEXT,
+
+    status TEXT DEFAULT 'created',
+
+    file_path TEXT,
+    total_rows INTEGER DEFAULT 0,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+16.9 Export row table
+
+Track exactly what was exported.
+
+CREATE TABLE export_rows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    export_batch_id INTEGER NOT NULL,
+    lead_candidate_id INTEGER NOT NULL,
+    email_draft_id INTEGER,
+
+    destination_row_id TEXT,
+
+    status TEXT DEFAULT 'exported',
+
+    exported_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (export_batch_id) REFERENCES export_batches(id),
+    FOREIGN KEY (lead_candidate_id) REFERENCES lead_candidates(id),
+    FOREIGN KEY (email_draft_id) REFERENCES email_drafts(id)
+);
+
+This prevents duplicates across exports.
+
+16.10 Lead status after export
+
+After successful export:
+
+lead_candidates.lead_status = exported
+
+Do not mark as contacted yet.
+
+Contacted should happen only when:
+
+campaign_events.event_type = sent
+16.11 Duplicate export prevention
+
+Before exporting, check:
+
+export_rows
+campaign_events
+lead_candidates.lead_status
+
+Skip if:
+
+lead already exported
+lead already contacted
+contact already contacted
+email already exists in active campaign
+
+Unless:
+
+force_export = true
+16.12 Export destinations
+1. CSV export
+
+MVP.
+
+Generate local CSV file
+Return download link
+Save file path in export_batches
+2. Google Sheets later
+
+Useful for review.
+
+Append rows to sheet
+Store sheet URL
+Store destination_row_id
+3. Clay webhook later
+
+Send each lead as JSON.
+
+{
+  "email": "sarah@example.com",
+  "first_name": "Sarah",
+  "company_name": "Example Store",
+  "subject": "quick idea for crm workflows",
+  "body": "Hi Sarah..."
+}
+4. Instantly / Smartlead later
+
+Either:
+
+CSV upload
+API push
+
+For MVP, CSV is enough.
+
+16.13 Export module structure
+/backend/modules/export
+  module.py
+  contracts.py
+  export_builder.py
+  csv_exporter.py
+  destination_providers/
+    google_sheets_exporter.py
+    webhook_exporter.py
+    instantly_exporter.py
+  tests/
+16.14 Main flow
+1. Load ready leads
+2. Exclude already exported/contacted leads
+3. Load approved draft
+4. Load company/contact/research/signals
+5. Build export rows
+6. Create export batch
+7. Generate destination output
+8. Save export rows
+9. Update lead statuses
+10. Log result
+16.15 Pseudocode
+class ExportModule(PipelineModule):
+    name = "export"
+
+    def run(self, context):
+        leads = lead_repo.get_ready_for_export(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 500),
+            include_exported=context.config.get("force_export", False)
+        )
+
+        rows = []
+
+        for lead in leads:
+            if export_repo.was_already_exported(lead.id) and not context.config.get("force_export"):
+                continue
+
+            draft = email_draft_repo.get_approved_passed_draft(lead.id)
+
+            if not draft:
+                continue
+
+            row = export_builder.build_row(lead, draft)
+            rows.append(row)
+
+        batch = export_batch_repo.create(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            export_type=context.config.get("export_type", "csv"),
+            destination=context.config.get("destination", "local_csv"),
+            total_rows=len(rows)
+        )
+
+        file_path = csv_exporter.export(rows, batch.id)
+
+        export_batch_repo.mark_completed(batch.id, file_path=file_path)
+
+        for row in rows:
+            export_row_repo.create(
+                export_batch_id=batch.id,
+                lead_candidate_id=row["lead_candidate_id"],
+                email_draft_id=row["draft_id"]
+            )
+
+            lead_repo.update_status(row["lead_candidate_id"], "exported")
+
+        return ModuleResult(
+            success=True,
+            input_count=len(leads),
+            output_count=len(rows),
+            failed_count=0,
+            data={"file_path": file_path, "export_batch_id": batch.id}
+        )
+16.16 Export row builder
+
+The builder should flatten all related data into one row.
+
+class ExportBuilder:
+    def build_row(self, lead, draft):
+        company = company_repo.get(lead.company_id)
+        contact = contact_repo.get(lead.contact_id)
+        research = research_repo.get_latest(lead.id)
+        signals = signal_repo.get_for_lead(lead.id)
+
+        return {
+            "lead_candidate_id": lead.id,
+            "company_name": company.name,
+            "domain": company.domain,
+            "website_url": company.website_url,
+            "industry": company.industry,
+            "country": company.country,
+            "contact_name": contact.full_name,
+            "first_name": contact.first_name,
+            "last_name": contact.last_name,
+            "job_title": contact.job_title,
+            "email": contact.email,
+            "linkedin_url": contact.linkedin_url,
+            "final_score": lead.final_score,
+            "top_signal": get_top_signal(signals),
+            "signal_sources": format_signal_sources(signals),
+            "qualification_summary": lead.qualification_summary,
+            "email_subject": draft.subject,
+            "email_body": draft.body,
+            "source_evidence": draft.source_evidence,
+            "draft_id": draft.id
+        }
+16.17 Export formats
+
+Support formats:
+
+default
+instantly
+smartlead
+clay
+custom
+Default format
+
+For internal review.
+
+Instantly format
+email
+first_name
+last_name
+company_name
+job_title
+website
+subject
+body
+custom_signal
+custom_reason
+Clay format
+
+More enriched.
+
+company_name
+domain
+contact_name
+email
+linkedin_url
+signals
+research_summary
+email_subject
+email_body
+source_urls
+16.18 Config example
+{
+  "export": {
+    "enabled": true,
+    "export_type": "csv",
+    "format": "instantly",
+    "limit": 500,
+    "force_export": false,
+    "include_source_evidence": true,
+    "include_research": true,
+    "mark_as_exported": true,
+    "destination": {
+      "type": "local_csv",
+      "folder": "/exports"
+    }
+  }
+}
+16.19 API endpoints
+Run export
+POST /api/export/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "format": "instantly",
+  "limit": 500,
+  "force_export": false
+}
+Download export
+GET /api/export/batches/{batch_id}/download
+List export batches
+GET /api/export/batches
+Preview export
+GET /api/export/preview?project_id=1&icp_id=1
+16.20 Frontend screens
+Export preview
+
+Columns:
+
+Company
+Contact
+Email
+Score
+Top signal
+Draft status
+Ready
+
+Actions:
+
+export CSV
+exclude
+view draft
+view evidence
+Export history
+
+Columns:
+
+Batch ID
+ICP
+Format
+Rows
+Status
+Created at
+Download
+16.21 Safety checks before export
+
+Before exporting, run final checks:
+
+lead not suppressed
+email not suppressed
+email not invalid
+draft approved
+draft passed QC
+lead not already exported
+lead not already contacted
+
+Hard block if any fail.
+
+16.22 MVP build order
+Step 1
+
+Create export_batches and export_rows.
+
+Step 2
+
+Build query for ready leads.
+
+Step 3
+
+Build export row builder.
+
+Step 4
+
+Build CSV exporter.
+
+Step 5
+
+Track exported rows.
+
+Step 6
+
+Update lead status to exported.
+
+Step 7
+
+Build export preview UI.
+
+Step 8
+
+Build export history/download UI.
+
+16.23 Definition of done
+
+This module is complete when:
+
+Only ready leads are exported
+Approved passed drafts are included
+CSV export works
+Export batches are tracked
+Exported rows are tracked
+Duplicate exports are prevented
+Lead status updates to exported
+Export history is visible
+Export can be downloaded

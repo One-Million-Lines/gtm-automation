@@ -1,0 +1,427 @@
+4. ICP Definition & Refinement Module
+
+This is one of the most important parts.
+If ICP is weak → everything downstream is garbage.
+
+Goal:
+
+Define WHO you target + WHY they should care + HOW you approach them
+4.1 Purpose
+
+This module allows you to:
+
+define a structured ICP
+refine it over time
+connect ICP to signals + scoring + messaging
+feed everything downstream (discovery, scoring, drafts)
+4.2 Output of this module
+
+Final output stored in DB (icps):
+
+- target companies (filters)
+- target personas (roles)
+- competitors (for signals)
+- pain points (for messaging)
+- buying signals (for triggers)
+- exclusions (for filtering)
+- outreach angle (for email drafts)
+
+Everything else in the system depends on this.
+
+4.3 ICP structure (final schema)
+
+You already created the table, but here’s the logical structure:
+
+{
+  "name": "DTC Ecommerce using Klaviyo",
+
+  "company": {
+    "industries": ["ecommerce", "DTC", "retail"],
+    "geographies": ["US", "UK", "EU"],
+    "employee_range": [10, 200],
+    "revenue_range": ["1M-50M"]
+  },
+
+  "personas": [
+    {
+      "title": "Head of CRM",
+      "aliases": ["CRM Manager", "Lifecycle Marketing Manager"],
+      "seniority": "mid_senior",
+      "priority": 1
+    },
+    {
+      "title": "Founder",
+      "aliases": ["CEO"],
+      "priority": 2
+    }
+  ],
+
+  "competitors": [
+    "Klaviyo",
+    "Mailchimp",
+    "HubSpot",
+    "Customer.io"
+  ],
+
+  "pain_points": [
+    "too much manual work in email campaigns",
+    "poor automation control",
+    "limited segmentation",
+    "high costs"
+  ],
+
+  "buying_signals": [
+    "uses Klaviyo",
+    "hiring CRM role",
+    "mentions email automation",
+    "recent growth",
+    "running ads"
+  ],
+
+  "exclusions": [
+    "enterprise >1000 employees",
+    "agencies",
+    "existing customers"
+  ],
+
+  "offer": {
+    "summary": "AI assistant for email + calendar + tasks",
+    "value_proposition": "reduce manual work, better control",
+    "outreach_angle": "you seem to be investing in lifecycle → we help automate execution"
+  }
+}
+4.4 Functional components
+
+This module has 3 parts:
+
+1. ICP creation (manual)
+2. ICP structuring (normalize + store)
+3. ICP refinement (learning loop)
+4.5 ICP creation (MVP)
+UI (React)
+
+Simple form:
+
+Name
+Description
+
+Company filters:
+- industries
+- countries
+- company size
+- revenue (optional)
+
+Personas:
+- job titles (free text list)
+
+Competitors:
+- list
+
+Pain points:
+- list
+
+Buying signals:
+- list
+
+Exclusions:
+- list
+
+Offer:
+- value proposition
+- outreach angle
+Backend endpoint
+POST /api/icps
+PUT /api/icps/{id}
+GET /api/icps
+Backend logic
+def create_icp(data):
+    # normalize inputs
+    # convert lists to JSON
+    # store in DB
+4.6 Normalization layer
+
+User input is messy. Normalize it.
+
+Example:
+
+"CRM Manager", "Head of CRM", "Lifecycle Marketing Manager"
+→ normalized_role = "crm_lead"
+Normalization service
+class ICPNormalizer:
+
+    def normalize_personas(self, personas):
+        # map to standard roles
+        return []
+
+    def normalize_industries(self, industries):
+        return []
+
+    def normalize_competitors(self, competitors):
+        return []
+Example mapping
+CRM Manager → crm
+Lifecycle Marketing → crm
+Email Marketing Manager → crm
+
+Founder → founder
+CEO → founder
+
+Head of Growth → growth
+VP Growth → growth
+
+Store both:
+
+raw title
+normalized_role
+4.7 ICP validation rules
+
+Before saving:
+
+must have at least:
+- 1 industry
+- 1 persona
+- 1 pain point
+- 1 signal
+
+Optional:
+
+competitors (but highly recommended)
+4.8 ICP → downstream mapping
+
+This is critical.
+
+Used by:
+Company discovery
+industries
+geographies
+company size
+competitors (search queries)
+Contact discovery
+personas
+Signal extraction
+buying_signals
+competitors
+pain_points
+Scoring
+ICP fit (company match)
+persona fit (contact role)
+signal match (buying signals)
+Email drafts
+pain_points
+value proposition
+outreach angle
+4.9 ICP refinement module (core differentiator)
+
+This is where your system becomes like the LinkedIn post.
+
+Inputs for refinement
+campaign_events
+email replies
+call transcripts
+knowledge_items
+manual feedback
+What gets refined
+pain points
+signals
+competitors
+messaging angles
+persona priority
+Output
+
+Updates:
+
+icps table
+knowledge_items
+4.10 Refinement logic
+Step 1: extract patterns
+
+From replies:
+
+positive replies → what worked
+negative replies → objections
+no replies → weak messaging
+Step 2: classify insights
+
+Example:
+
+"we already use Klaviyo"
+→ competitor signal
+
+"too expensive"
+→ pricing objection
+
+"not relevant"
+→ bad ICP
+Step 3: store in knowledge_items
+{
+  "type": "objection",
+  "content": "too expensive",
+  "icp_id": 1,
+  "importance": 0.8
+}
+Step 4: update ICP fields
+
+Examples:
+
+add new competitor
+refine pain points
+add/remove signals
+change outreach angle
+4.11 AI-assisted ICP refinement
+Prompt example
+Given:
+- ICP definition
+- campaign replies
+- winning emails
+- objections
+
+Return:
+- updated pain points
+- new signals
+- messaging improvements
+- ICP adjustments
+Output
+{
+  "pain_points": [...],
+  "signals": [...],
+  "messaging": [...],
+  "icp_changes": [...]
+}
+4.12 Versioning ICP
+
+Add versioning (important later):
+
+ALTER TABLE icps ADD COLUMN version INTEGER DEFAULT 1;
+ALTER TABLE icps ADD COLUMN parent_icp_id INTEGER;
+
+Each refinement can create:
+
+new version
+or update existing one
+4.13 Minimal refinement MVP
+
+Start simple:
+
+1. Store replies
+2. Tag them manually:
+   - positive
+   - negative
+   - objection
+3. Add notes manually
+4. Update ICP manually
+
+Then add AI later.
+
+4.14 Suggested services
+/services
+  icp_service.py
+  icp_normalizer.py
+  icp_refinement_service.py
+4.15 ICP service (core)
+class ICPService:
+
+    def create_icp(self, data):
+        pass
+
+    def update_icp(self, icp_id, data):
+        pass
+
+    def get_icp(self, icp_id):
+        pass
+
+    def validate_icp(self, icp):
+        pass
+
+    def normalize_icp(self, icp):
+        pass
+4.16 Refinement service
+class ICPRefinementService:
+
+    def analyze_feedback(self, icp_id):
+        pass
+
+    def extract_insights(self, replies):
+        pass
+
+    def suggest_updates(self, icp, insights):
+        pass
+
+    def apply_updates(self, icp_id, updates):
+        pass
+4.17 Data flow
+User creates ICP
+→ stored in DB
+→ used by discovery
+→ used by signals
+→ used by scoring
+→ used by drafts
+
+Campaign runs
+→ feedback stored
+→ refinement extracts insights
+→ ICP updated
+→ next run improved
+4.18 Common mistakes (avoid these)
+1. Too broad ICP
+
+Bad:
+
+"all SaaS companies"
+
+Good:
+
+"SaaS companies using HubSpot with 10–200 employees hiring marketing roles"
+2. No signals
+
+Bad:
+
+"target ecommerce companies"
+
+Good:
+
+"ecommerce companies using Klaviyo or hiring CRM roles"
+3. Generic pain points
+
+Bad:
+
+"improve marketing"
+
+Good:
+
+"manual campaign setup taking too long"
+4. No exclusions
+
+You will spam:
+
+agencies
+enterprises
+existing customers
+competitors
+4.19 MVP build plan
+
+Build in this order:
+
+Step 1
+Basic ICP form (React)
+Save to DB
+Step 2
+Normalization service
+Step 3
+Validation rules
+Step 4
+Use ICP in scoring + signals + drafts
+Step 5
+Manual refinement via notes
+Step 6 (later)
+AI refinement
+auto ICP updates
+versioning
+4.20 Definition of done
+
+This module is complete when:
+
+You can define a clear ICP
+It is stored in structured format
+It drives discovery, scoring, and drafts
+You can refine it based on feedback
+Next pipeline run improves targeting + messaging

@@ -1,0 +1,378 @@
+Execution plan for building the outbound system
+Phase 0: Project setup
+File 00: project foundation
+
+Build:
+
+Python backend
+React frontend
+SQLite database
+basic config system
+logging
+environment variables
+
+Deliverables:
+
+/backend
+/frontend
+SQLite connection
+schema runner
+basic health endpoint
+Phase 1: Database foundation
+File 01: database schema
+
+Build tables:
+
+projects
+icps
+companies
+contacts
+signals
+signal_evidence
+lead_candidates
+email_drafts
+suppression_list
+knowledge_items
+pipeline_runs
+pipeline_run_steps
+module_logs
+
+Also add:
+
+lead_research
+draft_quality_checks
+export_batches
+export_rows
+campaigns
+campaign_events
+
+Deliverable:
+
+schema.sql + migration runner
+Phase 2: Core backend architecture
+File 02: repository layer
+
+Build repositories for:
+
+ProjectRepo
+ICPRepo
+CompanyRepo
+ContactRepo
+LeadCandidateRepo
+SignalRepo
+EmailDraftRepo
+KnowledgeRepo
+PipelineRunRepo
+SuppressionRepo
+ExportRepo
+CampaignRepo
+
+Deliverable:
+
+clean database access layer
+File 03: pipeline framework
+
+Build:
+
+PipelineContext
+ModuleResult
+PipelineModule base class
+PipelineOrchestrator
+PipelineRegistry
+PipelineRunner
+
+Deliverable:
+
+dummy pipeline can run and log steps
+Phase 3: Basic UI and CRUD
+File 04: React admin shell
+
+Build:
+
+sidebar
+routes
+layout
+API client
+basic tables
+forms
+
+Pages:
+
+Projects
+ICPs
+Companies
+Contacts
+Leads
+Pipeline Runs
+File 05: ICP module
+
+Build:
+
+create ICP
+edit ICP
+list ICPs
+view ICP
+validate ICP
+normalize personas
+
+Fields:
+
+industries
+geographies
+company size
+personas
+competitors
+pain points
+buying signals
+exclusions
+value proposition
+outreach angle
+Phase 4: Data intake MVP
+File 06: source discovery MVP
+
+Build:
+
+CSV company import
+company normalization
+domain extraction
+company dedupe
+company_sources creation
+lead_candidate creation
+
+No scraping yet.
+
+File 07: contact discovery MVP
+
+Build:
+
+CSV contact import
+contact normalization
+role matcher
+contact dedupe
+lead_candidate update with contact
+File 08: suppression module
+
+Build:
+
+suppression_list CRUD
+suppress domain
+suppress email
+suppress company
+suppress contact
+CSV suppression import
+apply suppression to leads
+
+This should run before scoring/export.
+
+Phase 5: Enrichment and signals
+File 09: company enrichment MVP
+
+Build:
+
+website fetcher
+homepage text extraction
+meta title/description extraction
+basic tech detector
+company_enrichment save
+company update
+
+Detect first:
+
+Shopify
+WooCommerce
+Klaviyo
+Omnisend
+Mailchimp
+HubSpot
+Meta Pixel
+Gorgias
+Recharge
+File 10: contact enrichment MVP
+
+Build:
+
+email syntax validation
+domain/MX validation
+email status mapper
+enriched contact CSV import
+contact_enrichment save
+contact update
+
+Skip paid email providers for now.
+
+File 11: signal extraction MVP
+
+Build:
+
+signal_evidence table usage
+signal canonicalizer
+signal upsert
+evidence dedupe
+website HTML signals
+company enrichment signals
+manual signals
+
+Must support:
+
+one signal → multiple evidence records
+Phase 6: Lead intelligence
+File 12: scoring module
+
+Build:
+
+ICP fit scorer
+signal scorer
+persona fit scorer
+data quality scorer
+freshness scorer
+final score calculator
+lead status resolver
+qualification summary
+
+Output:
+
+lead_candidates scores + status
+File 13: knowledge base MVP
+
+Build:
+
+knowledge_items CRUD
+manual knowledge notes
+tag search
+retrieve knowledge by ICP/persona/competitor
+
+Skip AI extraction at first.
+
+File 14: AI research agent
+
+Build:
+
+lead_research table
+research context builder
+evidence formatter
+AI JSON prompt
+research validator
+save research brief
+
+Input:
+
+lead + company + contact + signals + knowledge
+Phase 7: Drafting and QC
+File 15: email draft generation
+
+Build:
+
+draft context builder
+AI email prompt
+JSON validation
+email_drafts save
+draft regenerate
+draft edit
+draft approve
+
+MVP:
+
+first_touch only
+1 variant only
+File 16: quality control
+
+Build:
+
+draft_quality_checks table
+rule-based checker
+banned phrase checker
+evidence check
+AI QC checker
+quality score
+lead readiness resolver
+
+Only mark ready when:
+
+lead score high
+not suppressed
+valid/acceptable email
+draft passed QC
+draft approved
+Phase 8: Export and feedback
+File 17: export module
+
+Build:
+
+export_batches
+export_rows
+ready lead query
+CSV exporter
+Instantly CSV format
+export history
+download endpoint
+duplicate export prevention
+File 18: campaign feedback ingestion
+
+Build:
+
+campaigns CRUD
+CSV feedback import
+event normalization
+match by email
+campaign_events save
+status updates
+bounce/unsubscribe suppression
+AI reply classifier
+File 19: self-improvement loop MVP
+
+Build:
+
+campaign metrics
+signal performance
+persona performance
+messaging performance
+suggestion generator
+suggestion review UI
+
+MVP should suggest, not auto-apply.
+
+Phase 9: Automation runner
+File 20: background runner
+
+Build:
+
+manual pipeline run
+scheduled pipeline run
+module selection
+run logs
+retry support
+status dashboard
+
+Pipeline presets:
+
+import_only
+enrichment_only
+scoring_only
+drafts_only
+full_pipeline
+feedback_loop
+Recommended build order
+
+Use this exact order:
+
+00 project foundation
+01 database schema
+02 repository layer
+03 pipeline framework
+04 React admin shell
+05 ICP module
+06 source discovery MVP
+07 contact discovery MVP
+08 suppression module
+09 company enrichment MVP
+10 contact enrichment MVP
+11 signal extraction MVP
+12 scoring module
+13 knowledge base MVP
+14 AI research agent
+15 email draft generation
+16 quality control
+17 export module
+18 campaign feedback ingestion
+19 self-improvement loop MVP
+20 background runner

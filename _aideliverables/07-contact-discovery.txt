@@ -1,0 +1,622 @@
+7. Contact Discovery Module
+7.1 Purpose
+
+Find the right people inside each qualified or enriched company.
+
+The company may be a good fit, but outreach only works if we identify the correct person.
+
+Output:
+
+company → relevant contact(s) → lead candidate
+7.2 Main goal
+
+Given:
+
+ICP personas + enriched companies
+
+Find contacts such as:
+
+Founder
+CEO
+CMO
+Head of Growth
+Head of CRM
+Lifecycle Marketing Manager
+Email Marketing Manager
+Ecommerce Manager
+Marketing Director
+RevOps
+Operations Manager
+7.3 Input
+
+Reads from:
+
+companies
+company_enrichment
+icps
+lead_candidates
+suppression_list
+
+Typical company input:
+
+{
+  "id": 12,
+  "name": "Example Store",
+  "domain": "examplestore.com",
+  "linkedin_url": "https://linkedin.com/company/example-store",
+  "industry": "DTC ecommerce",
+  "status": "enriched"
+}
+
+ICP input:
+
+{
+  "target_personas": [
+    "Founder",
+    "Head of CRM",
+    "Lifecycle Marketing Manager",
+    "Ecommerce Manager"
+  ]
+}
+7.4 Output
+
+Writes to:
+
+contacts
+contact_sources
+lead_candidates
+module_logs
+
+Each contact should include:
+
+full name
+job title
+normalized role
+company_id
+LinkedIn URL
+possible email if available
+source URL
+confidence score
+7.5 What this module should not do
+
+Do not:
+
+deep validate emails
+generate email drafts
+score final lead quality
+send outreach
+
+It may find emails, but email validation belongs to the next module.
+
+7.6 Contact discovery providers
+MVP providers
+
+Start with:
+
+manual CSV contact import
+company website team/contact pages
+LinkedIn profile search via Apify or external scraping
+Later providers
+
+Add:
+
+Apollo
+Hunter
+Snov
+People Data Labs
+Clay
+PhantomBuster
+Dropcontact
+Prospeo
+Findymail
+RocketReach
+7.7 Provider interface
+class ContactDiscoveryProvider:
+    name: str
+
+    def discover(self, company, icp, config) -> list[dict]:
+        pass
+
+Example providers:
+
+CSVContactProvider
+WebsiteTeamPageProvider
+ApolloContactProvider
+LinkedInApifyContactProvider
+HunterDomainSearchProvider
+7.8 Module folder structure
+/backend/modules/contact_discovery
+  module.py
+  contracts.py
+  normalizer.py
+  role_matcher.py
+  providers/
+    csv_provider.py
+    website_team_provider.py
+    linkedin_apify_provider.py
+    apollo_provider.py
+    hunter_provider.py
+  tests/
+7.9 Main flow
+1. Load enriched/qualified companies
+2. Load ICP target personas
+3. Run enabled contact providers
+4. Normalize contact data
+5. Match job title to persona
+6. Check suppression
+7. Deduplicate contacts
+8. Save contacts
+9. Save contact source
+10. Create/update lead candidate with contact_id
+11. Log result
+7.10 Pseudocode
+class ContactDiscoveryModule(PipelineModule):
+    name = "contact_discovery"
+
+    def run(self, context):
+        icp = icp_repo.get(context.icp_id)
+
+        companies = company_repo.get_for_contact_discovery(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 50)
+        )
+
+        created = 0
+        duplicates = 0
+        failed = 0
+
+        for company in companies:
+            try:
+                for provider in self.providers:
+                    results = provider.discover(company, icp, context.config)
+
+                    for raw_contact in results:
+                        contact = normalize_contact(raw_contact, company)
+
+                        if not contact.full_name:
+                            failed += 1
+                            continue
+
+                        role_match = role_matcher.match(
+                            job_title=contact.job_title,
+                            personas=icp.target_personas
+                        )
+
+                        if not role_match.is_match:
+                            continue
+
+                        if suppression_service.is_contact_suppressed(contact):
+                            continue
+
+                        saved_contact, was_created = contact_repo.upsert(contact)
+
+                        contact_source_repo.create(
+                            contact_id=saved_contact.id,
+                            source_type=provider.name,
+                            source_url=contact.source_url,
+                            raw_data=raw_contact,
+                            confidence_score=role_match.confidence
+                        )
+
+                        lead_repo.create_if_missing(
+                            project_id=context.project_id,
+                            icp_id=context.icp_id,
+                            company_id=company.id,
+                            contact_id=saved_contact.id
+                        )
+
+                        if was_created:
+                            created += 1
+                        else:
+                            duplicates += 1
+
+            except Exception as e:
+                failed += 1
+                log_error(e, company.id)
+
+        return ModuleResult(
+            success=True,
+            input_count=len(companies),
+            output_count=created,
+            failed_count=failed
+        )
+7.11 Contact normalization
+
+Normalize every contact to:
+
+{
+  "company_id": 12,
+  "first_name": "Sarah",
+  "last_name": "Miller",
+  "full_name": "Sarah Miller",
+  "job_title": "Head of CRM",
+  "normalized_role": "crm_lead",
+  "email": null,
+  "linkedin_url": "https://linkedin.com/in/sarahmiller",
+  "country": "US",
+  "city": "New York",
+  "source_url": "https://...",
+  "raw_data": {}
+}
+7.12 Role matching
+
+This is critical.
+
+The module should not save every random employee.
+It should prioritize ICP personas.
+
+Example mapping
+Founder, Co-Founder, CEO → founder
+CMO, VP Marketing, Marketing Director → marketing_lead
+Head of Growth, Growth Lead → growth_lead
+CRM Manager, Head of CRM → crm_lead
+Lifecycle Marketing Manager → lifecycle_marketing
+Email Marketing Manager → email_marketing
+Ecommerce Manager, Head of Ecommerce → ecommerce_lead
+Role match output
+{
+  "is_match": true,
+  "normalized_role": "crm_lead",
+  "persona_priority": 1,
+  "confidence": 0.92,
+  "reason": "Job title matches Head of CRM target persona"
+}
+7.13 Persona priority
+
+ICP should define role priority.
+
+Example:
+
+[
+  {
+    "role": "Head of CRM",
+    "priority": 1
+  },
+  {
+    "role": "Lifecycle Marketing Manager",
+    "priority": 2
+  },
+  {
+    "role": "Founder",
+    "priority": 3
+  }
+]
+
+Use this later in scoring.
+
+7.14 Deduplication rules
+
+Primary keys:
+
+email
+linkedin_url
+company_id + full_name
+
+Rules:
+
+if email exists → dedupe by email
+else if LinkedIn exists → dedupe by LinkedIn
+else → dedupe by company_id + normalized full_name
+
+Do not create duplicates like:
+
+Sarah Miller
+Sarah A. Miller
+S. Miller
+
+Add fuzzy matching later.
+
+7.15 Suppression checks
+
+Suppress if:
+
+email is in suppression list
+LinkedIn URL is suppressed
+company domain is suppressed
+contact previously unsubscribed
+contact bounced
+contact manually rejected
+7.16 Contact discovery status
+
+New contact:
+
+contacts.status = new
+
+If matched to persona:
+
+contacts.status = qualified
+
+If wrong persona:
+
+do not save, or save as rejected if useful
+
+MVP recommendation:
+
+only save matching personas
+7.17 Contact confidence score
+
+Calculate confidence from:
+
+name found: +0.2
+job title found: +0.2
+role matches persona: +0.3
+LinkedIn URL found: +0.2
+email found: +0.1
+
+Max:
+
+1.0
+
+Store in:
+
+contact_sources.confidence_score
+7.18 Website team page provider
+Pages to check
+/team
+/about
+/about-us
+/company
+/leadership
+/contact
+/pages/about
+/pages/contact
+Extract
+names
+job titles
+LinkedIn links
+emails if public
+
+Good for:
+
+small companies
+agencies
+SaaS
+founder-led businesses
+
+Bad for:
+
+large companies
+ecommerce brands
+7.19 LinkedIn / Apify provider
+
+Most useful for contact discovery.
+
+Input:
+
+company name
+company LinkedIn URL
+target roles
+
+Search examples:
+
+site:linkedin.com/in "Head of CRM" "Company Name"
+site:linkedin.com/in "Lifecycle Marketing Manager" "Company Name"
+site:linkedin.com/in "Founder" "Company Name"
+
+Output:
+
+name
+job title
+profile URL
+company
+location
+7.20 Apollo / Hunter style provider
+
+Input:
+
+domain
+target roles
+seniority
+departments
+
+Example filters:
+
+domain = example.com
+departments = marketing, ecommerce, growth
+seniority = manager, director, head, founder
+
+Output:
+
+contacts with email if available
+7.21 Contact ranking inside company
+
+If multiple contacts are found, rank them.
+
+Priority:
+
+1. exact persona match
+2. seniority
+3. department relevance
+4. has valid-looking email
+5. has LinkedIn URL
+6. source confidence
+
+Example ranking:
+
+Head of CRM > Marketing Manager > Founder > General Manager
+
+For small companies:
+
+Founder may be best
+
+For larger companies:
+
+functional owner is better
+7.22 Recommended limits
+
+Avoid too many contacts per company.
+
+MVP:
+
+max 3 contacts per company
+
+Later:
+
+max_contacts_per_company configurable per ICP
+
+Example:
+
+{
+  "max_contacts_per_company": 3,
+  "persona_priority": ["crm_lead", "growth_lead", "founder"]
+}
+7.23 API endpoints
+Run contact discovery
+POST /api/contact-discovery/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 50,
+  "providers": ["csv", "linkedin_apify"]
+}
+Upload contacts CSV
+POST /api/contact-discovery/upload
+Get contacts for company
+GET /api/companies/{company_id}/contacts
+Get contacts needing enrichment
+GET /api/contacts?status=qualified&email_status=unknown
+7.24 Frontend screens
+Contact discovery queue
+
+Columns:
+
+Company
+Domain
+Status
+Contacts found
+Best persona found
+Last discovery run
+
+Actions:
+
+discover contacts
+view contacts
+reject company
+Contact list
+
+Columns:
+
+Name
+Company
+Job title
+Normalized role
+LinkedIn
+Email
+Source
+Confidence
+Status
+
+Actions:
+
+approve
+reject
+suppress
+send to enrichment
+Contact detail page
+
+Sections:
+
+Basic info
+Source evidence
+Role match explanation
+Company link
+Lead candidate link
+Enrichment history
+7.25 Module config example
+{
+  "contact_discovery": {
+    "enabled": true,
+    "limit": 50,
+    "max_contacts_per_company": 3,
+    "providers": {
+      "csv": {
+        "enabled": true
+      },
+      "website_team": {
+        "enabled": true,
+        "max_pages": 5
+      },
+      "linkedin_apify": {
+        "enabled": false,
+        "actor_id": "linkedin-profile-search",
+        "max_results_per_company": 10
+      },
+      "apollo": {
+        "enabled": false,
+        "api_key_env": "APOLLO_API_KEY"
+      }
+    }
+  }
+}
+7.26 Error handling
+
+Item-level errors:
+
+missing full name
+missing job title
+profile does not match company
+provider returned duplicate
+bad LinkedIn URL
+
+Provider-level errors:
+
+rate limited
+invalid API key
+scraper blocked
+actor failed
+
+Behavior:
+
+log error
+continue with next provider/company
+do not stop full pipeline
+7.27 MVP build order
+Step 1
+
+Build contact CSV import.
+
+Step 2
+
+Build contact normalizer.
+
+Step 3
+
+Build role matcher.
+
+Step 4
+
+Build contact deduplication.
+
+Step 5
+
+Create lead candidates with contact_id.
+
+Step 6
+
+Build contact list UI.
+
+Step 7
+
+Add website team page scraper.
+
+Step 8
+
+Add LinkedIn/Apify provider later.
+
+7.28 Definition of done
+
+This module is complete when:
+
+The system can take enriched companies
+Find or import relevant contacts
+Match them to ICP personas
+Deduplicate them
+Skip suppressed contacts
+Create lead candidates
+Limit contacts per company
+Log every discovery run
+Prepare contacts for enrichment and validation

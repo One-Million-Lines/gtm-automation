@@ -1,0 +1,885 @@
+2. Data model & database schema
+2.1 Database goals
+
+The database must support:
+
+defining ICPs
+discovering companies
+enriching companies
+finding contacts
+validating contacts
+detecting signals
+scoring leads
+generating drafts
+preventing duplicates
+tracking pipeline runs
+learning from campaign feedback
+later expanding from single-tenant to multi-project
+
+For now, use SQLite.
+
+2.2 Core entities
+
+Main objects:
+
+Project
+  → ICP
+    → Companies
+      → Contacts
+        → Outreach Leads
+          → Email Drafts
+          → Campaign Feedback
+
+Supporting objects:
+
+Sources
+Signals
+Runs
+Run Steps
+Suppressions
+Knowledge Items
+2.3 Schema overview
+Tables
+projects
+icps
+companies
+company_sources
+company_enrichment
+contacts
+contact_sources
+contact_enrichment
+signals
+lead_candidates
+email_drafts
+campaigns
+campaign_events
+suppression_list
+knowledge_items
+pipeline_runs
+pipeline_run_steps
+module_logs
+2.4 Tables in detail
+1. projects
+
+Even if single-tenant now, create this from day one.
+
+CREATE TABLE projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+Example:
+
+ActorDo outbound
+Vibetrace ecommerce outbound
+2. icps
+
+Stores each ideal customer profile.
+
+CREATE TABLE icps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+
+    name TEXT NOT NULL,
+    description TEXT,
+
+    target_industries TEXT,
+    target_geographies TEXT,
+    target_company_sizes TEXT,
+    target_revenue_range TEXT,
+
+    target_personas TEXT,
+    pain_points TEXT,
+    competitors TEXT,
+    buying_signals TEXT,
+    exclusion_rules TEXT,
+
+    offer_summary TEXT,
+    value_proposition TEXT,
+    outreach_angle TEXT,
+
+    status TEXT DEFAULT 'active',
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+Use JSON strings for fields like:
+
+["ecommerce", "DTC", "fashion retail"]
+
+SQLite can store JSON as TEXT.
+
+3. companies
+
+Master company table.
+
+One company should exist only once per domain.
+
+CREATE TABLE companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    name TEXT,
+    domain TEXT UNIQUE,
+    website_url TEXT,
+
+    linkedin_url TEXT,
+    country TEXT,
+    city TEXT,
+    industry TEXT,
+    description TEXT,
+
+    employee_count INTEGER,
+    revenue_estimate TEXT,
+
+    ecommerce_platform TEXT,
+    tech_stack TEXT,
+
+    status TEXT DEFAULT 'new',
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+Recommended statuses:
+
+new
+discovered
+enriched
+qualified
+rejected
+suppressed
+
+Important rule:
+
+domain = main deduplication key
+4. company_sources
+
+Tracks where a company came from.
+
+CREATE TABLE company_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    company_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_name TEXT,
+    source_url TEXT,
+
+    raw_data TEXT,
+    confidence_score REAL,
+
+    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+Examples:
+
+apify_google_search
+apify_linkedin
+builtwith
+manual_upload
+job_board
+review_site
+5. company_enrichment
+
+Stores enrichment snapshots.
+
+This is separate from companies because enrichment can change over time.
+
+CREATE TABLE company_enrichment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    company_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+
+    industry TEXT,
+    employee_count INTEGER,
+    revenue_estimate TEXT,
+    location TEXT,
+    tech_stack TEXT,
+    ecommerce_platform TEXT,
+    social_links TEXT,
+
+    raw_data TEXT,
+    confidence_score REAL,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+6. contacts
+
+Master contact table.
+
+CREATE TABLE contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    company_id INTEGER NOT NULL,
+
+    first_name TEXT,
+    last_name TEXT,
+    full_name TEXT,
+
+    job_title TEXT,
+    normalized_role TEXT,
+
+    email TEXT,
+    email_status TEXT,
+    email_confidence REAL,
+
+    linkedin_url TEXT,
+
+    country TEXT,
+    city TEXT,
+
+    status TEXT DEFAULT 'new',
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+Recommended email_status:
+
+unknown
+valid
+risky
+invalid
+catch_all
+not_found
+
+Recommended status:
+
+new
+enriched
+qualified
+rejected
+suppressed
+contacted
+replied
+bounced
+unsubscribed
+7. contact_sources
+
+Tracks where contact data came from.
+
+CREATE TABLE contact_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    contact_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_name TEXT,
+    source_url TEXT,
+
+    raw_data TEXT,
+    confidence_score REAL,
+
+    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+8. contact_enrichment
+
+Stores provider-specific enrichment.
+
+CREATE TABLE contact_enrichment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    contact_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+
+    email TEXT,
+    email_status TEXT,
+    email_confidence REAL,
+
+    job_title TEXT,
+    linkedin_url TEXT,
+    phone TEXT,
+
+    raw_data TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+9. signals
+
+Signals explain why this lead matters now.
+
+CREATE TABLE signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    company_id INTEGER,
+    contact_id INTEGER,
+    icp_id INTEGER,
+
+    signal_type TEXT NOT NULL,
+    signal_name TEXT,
+
+    description TEXT,
+    extracted_text TEXT,
+    source_url TEXT,
+
+    strength_score REAL,
+    confidence_score REAL,
+
+    detected_by TEXT,
+    raw_data TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (company_id) REFERENCES companies(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+Example signal_type values:
+
+competitor_usage
+hiring_intent
+tech_stack
+funding
+growth
+bad_reviews
+manual_note
+website_copy
+linkedin_activity
+
+Example:
+
+Signal: uses Klaviyo
+Strength: 0.8
+Confidence: 0.9
+Source: BuiltWith / website script / job post
+10. lead_candidates
+
+This is the central table.
+
+It connects:
+
+ICP + company + contact
+
+A company/contact can be a good lead for one ICP but not another.
+
+CREATE TABLE lead_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    contact_id INTEGER,
+
+    lead_status TEXT DEFAULT 'new',
+
+    icp_fit_score REAL,
+    signal_score REAL,
+    persona_fit_score REAL,
+    data_quality_score REAL,
+    final_score REAL,
+
+    qualification_summary TEXT,
+    rejection_reason TEXT,
+
+    ready_for_outreach INTEGER DEFAULT 0,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id),
+    FOREIGN KEY (company_id) REFERENCES companies(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+
+Recommended statuses:
+
+new
+scored
+qualified
+needs_review
+ready
+exported
+contacted
+replied
+rejected
+suppressed
+11. email_drafts
+
+Stores generated outreach emails.
+
+CREATE TABLE email_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    lead_candidate_id INTEGER NOT NULL,
+
+    draft_type TEXT DEFAULT 'first_touch',
+
+    subject TEXT,
+    body TEXT,
+
+    personalization_notes TEXT,
+    source_evidence TEXT,
+
+    ai_model TEXT,
+    prompt_version TEXT,
+
+    quality_score REAL,
+    quality_status TEXT DEFAULT 'unchecked',
+
+    approved INTEGER DEFAULT 0,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (lead_candidate_id) REFERENCES lead_candidates(id)
+);
+
+Recommended quality_status:
+
+unchecked
+passed
+failed
+needs_review
+12. campaigns
+
+Optional for MVP, but useful for feedback.
+
+CREATE TABLE campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    name TEXT NOT NULL,
+    channel TEXT DEFAULT 'email',
+
+    provider TEXT,
+    external_campaign_id TEXT,
+
+    status TEXT DEFAULT 'draft',
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+Examples:
+
+Instantly campaign
+Smartlead campaign
+Manual CSV export
+LinkedIn campaign
+13. campaign_events
+
+Stores feedback.
+
+CREATE TABLE campaign_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    campaign_id INTEGER,
+    lead_candidate_id INTEGER,
+    contact_id INTEGER,
+
+    event_type TEXT NOT NULL,
+    event_value TEXT,
+
+    reply_text TEXT,
+    reply_sentiment TEXT,
+    reply_intent TEXT,
+
+    raw_data TEXT,
+
+    occurred_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
+    FOREIGN KEY (lead_candidate_id) REFERENCES lead_candidates(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+
+Event types:
+
+sent
+opened
+clicked
+replied
+positive_reply
+negative_reply
+neutral_reply
+meeting_booked
+bounced
+unsubscribed
+not_interested
+14. suppression_list
+
+Prevents bad outreach.
+
+CREATE TABLE suppression_list (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    suppression_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+
+    reason TEXT,
+    source TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+Types:
+
+domain
+email
+company_name
+linkedin_url
+competitor
+customer
+unsubscribed
+bounced
+
+Examples:
+
+domain: klaviyo.com
+email: john@example.com
+company_name: Existing Customer ABC
+15. knowledge_items
+
+Stores learnings from campaigns, calls, transcripts, strategy docs, replies.
+
+CREATE TABLE knowledge_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    item_type TEXT NOT NULL,
+    title TEXT,
+
+    content TEXT,
+    summary TEXT,
+
+    source_type TEXT,
+    source_url TEXT,
+
+    tags TEXT,
+    importance_score REAL,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+Types:
+
+call_transcript
+campaign_result
+reply_analysis
+objection
+winning_message
+competitor_note
+positioning_note
+manual_note
+16. pipeline_runs
+
+Each background run gets one record.
+
+CREATE TABLE pipeline_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    run_type TEXT NOT NULL,
+    status TEXT DEFAULT 'running',
+
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT,
+
+    total_processed INTEGER DEFAULT 0,
+    total_created INTEGER DEFAULT 0,
+    total_failed INTEGER DEFAULT 0,
+
+    error_message TEXT,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+Run types:
+
+company_discovery
+company_enrichment
+contact_discovery
+contact_enrichment
+signal_extraction
+scoring
+draft_generation
+full_pipeline
+feedback_ingestion
+17. pipeline_run_steps
+
+Tracks each module inside a run.
+
+CREATE TABLE pipeline_run_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    pipeline_run_id INTEGER NOT NULL,
+
+    module_name TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+
+    started_at TEXT,
+    finished_at TEXT,
+
+    input_count INTEGER DEFAULT 0,
+    output_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+
+    error_message TEXT,
+
+    FOREIGN KEY (pipeline_run_id) REFERENCES pipeline_runs(id)
+);
+18. module_logs
+
+Detailed logs.
+
+CREATE TABLE module_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    pipeline_run_id INTEGER,
+    pipeline_run_step_id INTEGER,
+
+    module_name TEXT,
+    level TEXT DEFAULT 'info',
+
+    message TEXT,
+    context TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (pipeline_run_id) REFERENCES pipeline_runs(id),
+    FOREIGN KEY (pipeline_run_step_id) REFERENCES pipeline_run_steps(id)
+);
+
+Levels:
+
+debug
+info
+warning
+error
+critical
+2.5 Recommended indexes
+
+These matter a lot.
+
+CREATE INDEX idx_companies_domain ON companies(domain);
+CREATE INDEX idx_contacts_email ON contacts(email);
+CREATE INDEX idx_contacts_company_id ON contacts(company_id);
+CREATE INDEX idx_lead_candidates_icp_id ON lead_candidates(icp_id);
+CREATE INDEX idx_lead_candidates_company_contact ON lead_candidates(company_id, contact_id);
+CREATE INDEX idx_signals_company_id ON signals(company_id);
+CREATE INDEX idx_signals_icp_id ON signals(icp_id);
+CREATE INDEX idx_email_drafts_lead_id ON email_drafts(lead_candidate_id);
+CREATE INDEX idx_campaign_events_lead_id ON campaign_events(lead_candidate_id);
+CREATE INDEX idx_suppression_value ON suppression_list(value);
+CREATE INDEX idx_pipeline_runs_project_id ON pipeline_runs(project_id);
+2.6 Important uniqueness rules
+Companies
+domain must be unique
+
+Do not use company name as the main key.
+
+Bad:
+
+Acme Inc
+ACME
+Acme GmbH
+
+Good:
+
+acme.com
+Contacts
+
+Eventually add unique logic:
+
+email unique if known
+linkedin_url unique if known
+company_id + full_name + job_title as fallback
+
+SQLite partial uniqueness is possible, but keep it simple in MVP.
+
+Lead candidates
+
+Avoid creating the same lead twice:
+
+CREATE UNIQUE INDEX idx_unique_lead_candidate
+ON lead_candidates(icp_id, company_id, contact_id);
+
+If contact_id is nullable, handle company-only leads in code.
+
+2.7 Key JSON fields
+
+Because SQLite is simple, store flexible data as JSON text.
+
+Examples:
+
+icps.target_industries
+icps.competitors
+companies.tech_stack
+signals.raw_data
+email_drafts.source_evidence
+knowledge_items.tags
+module_logs.context
+
+Example source_evidence:
+
+[
+  {
+    "type": "tech_stack",
+    "claim": "Company appears to use Klaviyo",
+    "source_url": "https://example.com",
+    "confidence": 0.82
+  }
+]
+2.8 Lead readiness logic
+
+A lead should become ready_for_outreach = 1 only when:
+
+company exists
+company has domain
+company is not suppressed
+contact exists
+contact has valid or high-confidence email
+contact matches persona
+at least one signal exists
+final_score >= threshold
+draft exists
+draft passes quality check
+
+Example threshold:
+
+final_score >= 70
+quality_score >= 70
+email_status in valid, catch_all, risky
+2.9 Scoring model fields
+
+Recommended scoring formula:
+
+final_score =
+  30% ICP fit
+  25% signal strength
+  20% persona fit
+  15% data quality
+  10% freshness
+
+Store the components in lead_candidates.
+
+Do not only store final score. You need the breakdown to debug why a lead was selected.
+
+2.10 MVP database creation order
+
+Build tables in this order:
+
+1. projects
+2. icps
+3. companies
+4. contacts
+5. signals
+6. lead_candidates
+7. email_drafts
+8. suppression_list
+9. pipeline_runs
+10. pipeline_run_steps
+11. module_logs
+
+Then add:
+
+12. company_sources
+13. contact_sources
+14. company_enrichment
+15. contact_enrichment
+16. campaigns
+17. campaign_events
+18. knowledge_items
+2.11 MVP shortcut version
+
+For the first working version, you can start with only these:
+
+projects
+icps
+companies
+contacts
+signals
+lead_candidates
+email_drafts
+suppression_list
+pipeline_runs
+module_logs
+
+That is enough to build:
+
+ICP → companies → contacts → signals → scores → drafts → export
+2.12 Example final export fields
+
+The export should be generated from multiple tables.
+
+project_name
+icp_name
+company_name
+domain
+industry
+country
+employee_count
+contact_name
+job_title
+normalized_role
+email
+email_status
+linkedin_url
+signals
+signal_sources
+final_score
+qualification_summary
+email_subject
+email_body
+draft_quality_score
+ready_for_outreach
+2.13 Recommended file structure
+
+For Python backend:
+
+/backend
+  /db
+    database.py
+    schema.sql
+    migrations/
+  /models
+    project.py
+    icp.py
+    company.py
+    contact.py
+    signal.py
+    lead_candidate.py
+    email_draft.py
+  /repositories
+    project_repo.py
+    icp_repo.py
+    company_repo.py
+    contact_repo.py
+    lead_repo.py
+  /services
+    deduplication_service.py
+    scoring_service.py
+    suppression_service.py

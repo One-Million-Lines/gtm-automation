@@ -1,0 +1,706 @@
+5. Source Discovery Module
+5.1 Purpose
+
+Find companies that match an ICP and add them into the pipeline.
+
+This module does not need to fully qualify the company.
+Its job is to create a clean starting list of potential target companies.
+
+Output:
+
+Company records + source evidence + initial lead candidate
+5.2 Main goal
+
+Given an ICP, the module should answer:
+
+Where can we find companies that look like this ICP?
+
+Then it should collect:
+
+company name
+domain
+website
+source URL
+reason discovered
+raw source data
+5.3 Input
+
+From icps table:
+
+industries
+geographies
+company size
+competitors
+buying signals
+exclusion rules
+target personas
+
+Optional manual inputs:
+
+seed companies
+CSV upload
+specific directories
+specific competitors
+specific search queries
+specific Apify actors
+5.4 Output
+
+Writes to:
+
+companies
+company_sources
+lead_candidates
+module_logs
+
+Example output:
+
+{
+  "name": "Example Store",
+  "domain": "examplestore.com",
+  "website_url": "https://examplestore.com",
+  "source_type": "google_search",
+  "source_url": "https://www.google.com/search?q=site...",
+  "discovery_reason": "Found while searching for Shopify fashion stores using Klaviyo",
+  "icp_id": 1
+}
+5.5 What this module should not do
+
+Do not overload this module.
+
+It should not:
+
+find contacts
+write email drafts
+fully qualify leads
+score leads deeply
+validate emails
+
+It can add a light discovery confidence score, but deeper qualification happens later.
+
+5.6 Discovery source types
+1. Manual CSV upload
+
+Best MVP source.
+
+Input columns:
+
+company_name
+domain
+website_url
+linkedin_url
+country
+industry
+source_url
+notes
+
+Use this first because it avoids scraper complexity.
+
+2. Seed list expansion
+
+User gives:
+
+10 known companies
+
+System finds similar companies by:
+
+industry
+tech stack
+keywords
+competitors
+market category
+
+MVP can store seed companies only.
+Expansion can come later.
+
+3. Search query discovery
+
+System generates search queries from ICP.
+
+Example ICP:
+
+DTC ecommerce brands using Klaviyo in the US
+
+Generated queries:
+
+"powered by Shopify" "Klaviyo" "fashion"
+"site:myshopify.com" "Klaviyo"
+"lifecycle marketing manager" "Klaviyo" "DTC"
+"email marketing manager" "Shopify" "Klaviyo"
+
+Sources:
+
+Google Search API
+SerpAPI
+Apify Google Search scraper
+Bing Search API
+4. Directory discovery
+
+Find companies from public directories.
+
+Examples:
+
+Clutch
+G2
+Capterra
+Shopify stores lists
+BuiltWith lists
+Apollo lists
+Crunchbase
+LinkedIn company search via Apify
+marketplace directories
+5. Competitor-based discovery
+
+Find companies that use or mention competitor tools.
+
+Example for Vibetrace:
+
+companies using Klaviyo
+companies using Mailchimp
+companies using Omnisend
+companies using Customer.io
+
+Sources:
+
+BuiltWith
+Wappalyzer
+website script detection
+job posts
+case studies
+review sites
+public customer pages
+6. Signal-based discovery
+
+Find companies based on buying triggers.
+
+Examples:
+
+hiring CRM manager
+hiring lifecycle marketer
+hiring email marketing manager
+recent ecommerce migration
+recent funding
+new market launch
+high ad spend
+using Shopify Plus
+complaining about current provider
+
+Sources:
+
+job boards
+LinkedIn jobs via Apify
+company websites
+news search
+Reddit
+review sites
+communities
+7. Uploaded or existing database
+
+Allow import from:
+
+CSV
+Google Sheet later
+Clay export
+Apollo export
+Instantly export
+CRM export
+existing customer list
+5.7 Provider architecture
+
+The module should not care where data comes from.
+
+Use provider interfaces.
+
+class CompanyDiscoveryProvider:
+    name: str
+
+    def discover(self, icp, config) -> list[dict]:
+        pass
+
+Example providers:
+
+CSVCompanyDiscoveryProvider
+ApifyGoogleSearchProvider
+ApifyLinkedInCompanyProvider
+BuiltWithProvider
+JobBoardDiscoveryProvider
+ManualSeedProvider
+5.8 Module structure
+/backend/modules/source_discovery
+  module.py
+  contracts.py
+  query_builder.py
+  normalizer.py
+  providers/
+    csv_provider.py
+    manual_provider.py
+    apify_google_provider.py
+    builtwith_provider.py
+    job_board_provider.py
+  tests/
+5.9 Main module flow
+1. Load ICP
+2. Load active discovery providers
+3. Build discovery queries
+4. Run providers
+5. Normalize company data
+6. Extract domain
+7. Check suppression
+8. Deduplicate
+9. Save company
+10. Save company source
+11. Create lead candidate
+12. Log result
+5.10 Pseudocode
+class SourceDiscoveryModule(PipelineModule):
+    name = "source_discovery"
+
+    def run(self, context):
+        icp = icp_repo.get(context.icp_id)
+        providers = self.get_enabled_providers(context.config)
+
+        total_found = 0
+        total_created = 0
+        total_duplicates = 0
+        total_failed = 0
+
+        for provider in providers:
+            results = provider.discover(icp, context.config)
+
+            for item in results:
+                try:
+                    normalized = normalize_company(item)
+
+                    if not normalized.domain:
+                        total_failed += 1
+                        continue
+
+                    if suppression_service.is_domain_suppressed(normalized.domain):
+                        continue
+
+                    company, created = company_repo.upsert_by_domain(normalized)
+
+                    company_source_repo.create(
+                        company_id=company.id,
+                        source_type=provider.name,
+                        source_url=normalized.source_url,
+                        raw_data=item
+                    )
+
+                    lead_repo.create_if_missing(
+                        project_id=context.project_id,
+                        icp_id=context.icp_id,
+                        company_id=company.id
+                    )
+
+                    total_found += 1
+
+                    if created:
+                        total_created += 1
+                    else:
+                        total_duplicates += 1
+
+                except Exception as e:
+                    total_failed += 1
+                    log_error(e, item)
+
+        return ModuleResult(
+            success=True,
+            input_count=total_found,
+            output_count=total_created,
+            failed_count=total_failed
+        )
+5.11 Discovery query builder
+
+This is important.
+
+The query builder turns ICP into provider-specific searches.
+
+Input
+{
+  "industries": ["ecommerce", "fashion"],
+  "geographies": ["US", "UK"],
+  "competitors": ["Klaviyo", "Omnisend"],
+  "buying_signals": ["hiring lifecycle marketer", "uses Shopify Plus"]
+}
+Output
+[
+  {
+    "provider": "google_search",
+    "query": "\"Klaviyo\" \"Shopify\" \"fashion brand\""
+  },
+  {
+    "provider": "job_board",
+    "query": "\"lifecycle marketing manager\" \"Klaviyo\""
+  },
+  {
+    "provider": "builtwith",
+    "technology": "Klaviyo"
+  }
+]
+5.12 Query templates
+
+Store reusable templates.
+
+/backend/modules/source_discovery/query_templates.py
+
+Examples:
+
+QUERY_TEMPLATES = {
+    "competitor_usage": [
+        '"{competitor}" "{industry}" "{geo}"',
+        '"uses {competitor}" "{industry}"',
+        '"{competitor}" "Shopify" "{industry}"'
+    ],
+    "hiring_signal": [
+        '"{persona}" "{competitor}" "{geo}"',
+        '"hiring" "{persona}" "{industry}"',
+        '"lifecycle marketing manager" "{competitor}"'
+    ],
+    "directory": [
+        '"top {industry} companies" "{geo}"',
+        '"best {industry} brands" "{geo}"'
+    ]
+}
+5.13 Normalization rules
+
+Every provider returns messy data.
+
+Normalize to this structure:
+
+{
+    "name": str,
+    "domain": str,
+    "website_url": str,
+    "linkedin_url": str | None,
+    "country": str | None,
+    "city": str | None,
+    "industry": str | None,
+    "description": str | None,
+    "source_url": str | None,
+    "source_type": str,
+    "raw_data": dict
+}
+5.14 Domain extraction rules
+
+This is critical for deduplication.
+
+Examples:
+
+https://www.example.com/pages/about → example.com
+http://example.com → example.com
+www.example.co.uk → example.co.uk
+shop.example.com → example.com, unless configured otherwise
+
+Use a domain parser library if possible.
+
+Recommended Python packages:
+
+tldextract
+urllib.parse
+5.15 Deduplication rules
+
+Primary dedupe key:
+
+domain
+
+Secondary fallback:
+
+normalized company name + country
+
+Company name normalization:
+
+remove Inc, LLC, GmbH, AG, Ltd
+lowercase
+remove punctuation
+trim whitespace
+
+Examples:
+
+Example GmbH
+Example Ltd.
+EXAMPLE
+→ example
+5.16 Suppression checks
+
+Before saving, check:
+
+suppression_list
+
+Suppress if:
+
+domain is competitor
+domain is existing customer
+domain is blacklisted
+domain was unsubscribed
+domain previously bounced too much
+company manually rejected
+5.17 Company discovery status
+
+When saved:
+
+companies.status = discovered
+lead_candidates.lead_status = new
+
+If already exists:
+
+do not overwrite important fields unless new data is better
+5.18 Discovery confidence score
+
+Each source should assign an initial confidence.
+
+Example:
+
+manual CSV: 1.0
+BuiltWith competitor list: 0.9
+Google result: 0.6
+Job post mention: 0.7
+LinkedIn search: 0.8
+
+Store in:
+
+company_sources.confidence_score
+5.19 MVP version
+
+Start with only 2 providers:
+
+Provider 1: CSV upload
+
+Fastest and most reliable.
+
+Upload company list
+Normalize
+Deduplicate
+Save
+Create lead candidates
+Provider 2: manual search query import
+
+You paste search results or scraped output.
+
+Paste JSON/CSV from Apify
+System imports and normalizes
+
+This lets you test the full system before automating discovery.
+
+5.20 Next version
+
+Add:
+
+Apify Google Search provider
+Apify website crawler provider
+BuiltWith/Wappalyzer provider
+Job board provider
+5.21 API endpoints
+Run source discovery
+POST /api/discovery/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "providers": ["csv", "apify_google"],
+  "limit": 100
+}
+Upload company CSV
+POST /api/discovery/upload-companies
+Preview discovery queries
+GET /api/discovery/icps/{icp_id}/queries
+
+Returns:
+
+[
+  {
+    "type": "competitor_usage",
+    "query": "\"Klaviyo\" \"Shopify\" \"fashion\""
+  }
+]
+Get discovered companies
+GET /api/companies?status=discovered
+5.22 Frontend screens
+Screen 1: Discovery setup
+
+Fields:
+
+ICP selector
+Provider selector
+Limit
+Geography
+Include/exclude keywords
+Run button
+Screen 2: Query preview
+
+Show generated queries:
+
+Search query
+Source type
+Expected signal
+Editable before run
+Screen 3: Import CSV
+
+Upload CSV and map columns:
+
+CSV column → database field
+
+Example:
+
+Company Name → name
+Website → website_url
+Domain → domain
+LinkedIn → linkedin_url
+Screen 4: Discovered companies
+
+Table:
+
+Company
+Domain
+Source
+Confidence
+Status
+Created at
+
+Actions:
+
+approve
+reject
+suppress
+send to enrichment
+5.23 Data quality rules
+
+Reject or mark failed if:
+
+no company name
+no domain and no website
+invalid domain
+domain is social-only like linkedin.com/company/...
+domain is marketplace profile without real website
+
+Needs review if:
+
+company name exists but domain unclear
+source confidence < 0.5
+duplicate name but different domain
+5.24 Example workflow
+
+ICP:
+
+DTC ecommerce brands using Klaviyo
+
+System generates:
+
+"Klaviyo" "Shopify" "fashion brand"
+"Klaviyo" "lifecycle marketing manager"
+"email marketing manager" "Klaviyo" "DTC"
+
+Provider returns:
+
+Brand A
+Brand B
+Brand C
+
+System saves:
+
+companies
+company_sources
+lead_candidates
+
+Later modules enrich and score them.
+
+5.25 Module configuration example
+{
+  "source_discovery": {
+    "enabled": true,
+    "providers": {
+      "csv": {
+        "enabled": true
+      },
+      "apify_google": {
+        "enabled": false,
+        "actor_id": "apify/google-search-scraper",
+        "max_results": 100
+      },
+      "builtwith": {
+        "enabled": false,
+        "api_key_env": "BUILTWITH_API_KEY",
+        "technologies": ["Klaviyo", "Shopify"]
+      }
+    },
+    "dedupe_by_domain": true,
+    "create_lead_candidates": true
+  }
+}
+5.26 Error handling
+
+Item-level errors:
+
+missing domain
+invalid URL
+parse failure
+suppressed domain
+duplicate company
+
+Provider-level errors:
+
+API unavailable
+rate limited
+bad credentials
+actor failed
+invalid response format
+
+Provider failure should not kill the full pipeline unless configured.
+
+5.27 Logs to store
+
+For every run:
+
+provider used
+queries generated
+companies found
+companies created
+duplicates skipped
+suppressed skipped
+failed rows
+error messages
+5.28 Definition of done
+
+This module is complete when:
+
+User can select an ICP
+System can generate discovery queries
+User can import companies from CSV
+Companies are normalized and deduplicated
+Suppressed domains are skipped
+Company sources are stored
+Lead candidates are created
+Run logs are saved
+5.29 Build order
+Step 1
+
+Build CSV import.
+
+Step 2
+
+Build company normalization and domain extraction.
+
+Step 3
+
+Build deduplication by domain.
+
+Step 4
+
+Build suppression checks.
+
+Step 5
+
+Create lead candidates automatically.
+
+Step 6
+
+Build query preview from ICP.
+
+Step 7
+
+Add Apify/manual JSON import.
+
+Step 8
+
+Add automated providers later.

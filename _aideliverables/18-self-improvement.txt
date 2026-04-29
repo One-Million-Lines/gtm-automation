@@ -1,0 +1,473 @@
+18. Self-improvement loop
+18.1 Purpose
+
+Make the system get better after every campaign automatically.
+
+This module connects everything:
+
+campaign results → knowledge → ICP → signals → scoring → drafts
+
+Without this, you just automate outbound.
+With this, you build a system that learns and compounds.
+
+18.2 Core idea
+
+Every cycle should improve:
+
+targeting
+signal selection
+messaging
+prioritization
+
+Instead of:
+
+Campaign 1 → Campaign 2 (same quality)
+
+You get:
+
+Campaign 1 → learn → Campaign 2 better → learn → Campaign 3 even better
+18.3 Loop stages
+
+The loop runs in 5 steps:
+
+1. Collect outcomes (campaign feedback)
+2. Extract insights (knowledge base)
+3. Generate improvement suggestions
+4. Apply improvements (semi-auto)
+5. Feed into next pipeline run
+18.4 Inputs
+
+Reads from:
+
+campaign_events
+knowledge_items
+lead_candidates
+email_drafts
+signals
+icps
+companies
+contacts
+18.5 Outputs
+
+Writes to:
+
+knowledge_items
+icp_refinement suggestions
+scoring adjustments
+draft rules
+signal patterns
+module_logs
+
+Optional tracking table:
+
+CREATE TABLE improvement_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    insights_generated INTEGER,
+    suggestions_generated INTEGER,
+    applied_changes INTEGER,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+18.6 What gets improved
+1. ICP definition
+Which companies respond
+Which companies ignore
+Which segments convert
+Which should be excluded
+2. Signals
+Which signals correlate with replies
+Which signals are useless
+New signals discovered from replies
+3. Persona targeting
+Which roles respond
+Which roles ignore
+Which roles convert
+4. Messaging
+Which angles work
+Which angles fail
+Which objections appear often
+5. Scoring weights
+Boost signals that convert
+Reduce signals that don’t
+Adjust persona weights
+18.7 Core metrics
+
+Track:
+
+sent_count
+reply_count
+positive_replies
+negative_replies
+meetings_booked
+bounce_rate
+unsubscribe_rate
+
+Derived:
+
+reply_rate
+positive_rate
+meeting_rate
+conversion_rate per segment
+18.8 Segment analysis
+
+Break performance by:
+
+ICP
+industry
+company size
+geo
+signal presence
+competitor usage
+persona
+email angle
+
+Example:
+
+CRM Managers using Klaviyo → 12% reply rate
+Founders using Klaviyo → 4% reply rate
+18.9 Signal performance analysis
+
+For each signal:
+
+count of leads with signal
+reply rate
+positive rate
+meeting rate
+
+Example:
+
+Signal: Uses Klaviyo
+→ 300 leads
+→ 8% reply rate
+→ 3% meetings
+
+Signal: Hiring Lifecycle Manager
+→ 50 leads
+→ 20% reply rate
+→ 8% meetings
+
+Conclusion:
+
+Hiring signal >> competitor usage signal
+18.10 Persona performance
+
+Example:
+
+Head of CRM → 15% reply
+Lifecycle Manager → 18% reply
+Founder → 5% reply
+
+Action:
+
+boost CRM + lifecycle roles
+reduce founder targeting
+18.11 Messaging performance
+
+Compare drafts vs outcomes.
+
+Example:
+
+Angle: reduce manual workflows → high replies
+Angle: replace Klaviyo → low replies
+
+Extract:
+
+winning_message
+losing_message
+objection patterns
+
+Store in:
+
+knowledge_items
+18.12 Suggestion engine
+
+This module should NOT auto-change everything.
+
+Instead, generate structured suggestions.
+
+Example output:
+
+{
+  "icp_suggestions": [
+    {
+      "type": "boost_segment",
+      "description": "Companies hiring lifecycle roles have 2.5x higher reply rate.",
+      "confidence": 0.85
+    },
+    {
+      "type": "exclude_segment",
+      "description": "Founders show low engagement and high unsubscribe rate.",
+      "confidence": 0.75
+    }
+  ],
+  "signal_suggestions": [
+    {
+      "type": "boost_signal",
+      "signal_name": "Hiring Lifecycle Marketing Manager",
+      "confidence": 0.9
+    },
+    {
+      "type": "reduce_signal",
+      "signal_name": "Uses Shopify",
+      "confidence": 0.6
+    }
+  ],
+  "messaging_suggestions": [
+    {
+      "type": "winning_angle",
+      "description": "Automation without platform migration performs well.",
+      "confidence": 0.88
+    },
+    {
+      "type": "losing_angle",
+      "description": "Replacing Klaviyo directly triggers resistance.",
+      "confidence": 0.8
+    }
+  ]
+}
+18.13 AI suggestion prompt
+You analyze outbound campaign performance and suggest improvements.
+
+Given:
+- ICP definition
+- campaign results
+- reply classification
+- signals
+- segments
+- knowledge items
+
+Return JSON only:
+{
+  "icp_suggestions": [],
+  "signal_suggestions": [],
+  "persona_suggestions": [],
+  "messaging_suggestions": [],
+  "scoring_suggestions": [],
+  "confidence_score": 0.0
+}
+
+Rules:
+- Only suggest changes backed by data patterns.
+- Prefer patterns seen across multiple leads.
+- Do not overfit to small samples.
+- Use cautious language when confidence is low.
+18.14 Applying improvements
+
+MVP:
+
+manual approval required
+
+User can:
+
+accept suggestion
+reject suggestion
+edit suggestion
+Later (semi-auto)
+
+Allow:
+
+auto-adjust signal weights
+auto-update scoring weights
+auto-update ICP filters
+auto-update draft rules
+
+But always:
+
+log changes
+allow rollback
+18.15 Feedback loop integration
+
+After applying improvements:
+
+new ICP → new source discovery
+new signals → better targeting
+new scoring → better prioritization
+new drafts → better messaging
+
+Pipeline becomes:
+
+discover → enrich → signals → score → research → draft → QC → export → feedback → improve → repeat
+18.16 Loop frequency
+
+Run:
+
+after each campaign
+or after X replies (e.g., 20–50)
+or daily batch
+18.17 Module structure
+/backend/modules/self_improvement
+  module.py
+  contracts.py
+  performance_analyzer.py
+  segment_analyzer.py
+  signal_analyzer.py
+  persona_analyzer.py
+  messaging_analyzer.py
+  suggestion_engine.py
+  suggestion_applier.py
+  tests/
+18.18 Main flow
+1. Load campaign data
+2. Aggregate metrics
+3. Analyze segments
+4. Analyze signals
+5. Analyze personas
+6. Analyze messaging
+7. Generate suggestions
+8. Save suggestions
+9. Optionally apply changes
+10. Log improvement run
+18.19 Pseudocode
+class SelfImprovementModule(PipelineModule):
+    name = "self_improvement"
+
+    def run(self, context):
+        campaigns = campaign_repo.get_recent(context.project_id)
+
+        performance = performance_analyzer.compute(campaigns)
+
+        segment_insights = segment_analyzer.analyze(performance)
+        signal_insights = signal_analyzer.analyze(performance)
+        persona_insights = persona_analyzer.analyze(performance)
+        messaging_insights = messaging_analyzer.analyze(performance)
+
+        suggestions = suggestion_engine.generate(
+            segment_insights,
+            signal_insights,
+            persona_insights,
+            messaging_insights
+        )
+
+        suggestion_repo.save(suggestions)
+
+        if context.config.get("auto_apply"):
+            applied = suggestion_applier.apply(suggestions)
+        else:
+            applied = 0
+
+        improvement_repo.create(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            insights_generated=len(suggestions),
+            applied_changes=applied
+        )
+
+        return ModuleResult(
+            success=True,
+            input_count=len(campaigns),
+            output_count=len(suggestions),
+            failed_count=0
+        )
+18.20 Example improvement
+Before
+ICP: ecommerce companies
+Signals: uses Shopify
+Persona: founder
+Angle: replace Klaviyo
+After 2 campaigns
+
+Insights:
+
+Founders do not respond
+CRM managers respond
+Hiring signal is strong
+Klaviyo replacement triggers resistance
+Updated system
+ICP → prioritize CRM/lifecycle roles
+Signals → boost hiring signal
+Persona → reduce founder targeting
+Messaging → focus on automation, not replacement
+18.21 Config example
+{
+  "self_improvement": {
+    "enabled": true,
+    "min_events_required": 20,
+    "min_replies_required": 10,
+    "auto_apply": false,
+    "confidence_threshold": 0.7,
+    "analyze_segments": true,
+    "analyze_signals": true,
+    "analyze_personas": true,
+    "analyze_messaging": true
+  }
+}
+18.22 API endpoints
+Run improvement loop
+POST /api/self-improvement/run
+Get suggestions
+GET /api/self-improvement/suggestions
+Apply suggestion
+POST /api/self-improvement/suggestions/{id}/apply
+Reject suggestion
+POST /api/self-improvement/suggestions/{id}/reject
+18.23 Frontend screens
+Improvement dashboard
+
+Shows:
+
+reply rates
+conversion rates
+top signals
+top personas
+best segments
+worst segments
+Suggestions list
+
+Columns:
+
+Type
+Description
+Confidence
+Impact
+Status
+
+Actions:
+
+apply
+reject
+edit
+18.24 MVP build order
+Step 1
+
+Compute basic campaign metrics.
+
+Step 2
+
+Build signal performance analysis.
+
+Step 3
+
+Build persona performance analysis.
+
+Step 4
+
+Build simple suggestion generator.
+
+Step 5
+
+Store suggestions.
+
+Step 6
+
+Add UI for review.
+
+Step 7
+
+Allow manual application.
+
+18.25 Definition of done
+
+This module is complete when:
+
+Campaign performance is analyzed
+Signals are ranked by performance
+Personas are ranked by performance
+Messaging effectiveness is tracked
+System generates structured improvement suggestions
+Suggestions can be reviewed and applied
+Future pipeline runs benefit from previous campaigns
+The system improves over time instead of restarting from scratch

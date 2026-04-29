@@ -1,0 +1,524 @@
+13. AI research agent module
+13.1 Purpose
+
+Create a compact, source-backed research brief for each lead.
+
+This module answers:
+
+Why is this company/contact relevant?
+What should we mention in the email?
+What should we avoid saying?
+What is the best outreach angle?
+
+It sits between:
+
+scoring → email draft generation
+13.2 Main output
+
+Writes to:
+
+lead_candidates.qualification_summary
+
+Recommended additional table:
+
+CREATE TABLE lead_research (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    lead_candidate_id INTEGER NOT NULL,
+
+    company_summary TEXT,
+    contact_summary TEXT,
+    why_relevant TEXT,
+    key_signals TEXT,
+    personalization_angles TEXT,
+    risks_or_unknowns TEXT,
+    recommended_angle TEXT,
+    source_evidence TEXT,
+
+    ai_model TEXT,
+    prompt_version TEXT,
+
+    confidence_score REAL,
+    quality_status TEXT DEFAULT 'unchecked',
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (lead_candidate_id) REFERENCES lead_candidates(id)
+);
+13.3 Input
+
+Reads from:
+
+lead_candidates
+companies
+contacts
+signals
+signal_evidence
+company_enrichment
+contact_enrichment
+knowledge_items
+icps
+campaign_events
+
+Optional later:
+
+company website live scrape
+LinkedIn profile text
+news search
+review pages
+job posts
+13.4 What it should produce
+
+For each lead:
+
+company summary
+contact summary
+ICP fit explanation
+top signals
+source-backed personalization angles
+best outreach angle
+risks/unknowns
+drafting guidance
+
+Example output:
+
+{
+  "company_summary": "DTC skincare brand selling online, likely using Shopify.",
+  "contact_summary": "Sarah Miller appears to own CRM or lifecycle marketing.",
+  "why_relevant": "The company matches the ecommerce ICP and appears to use Klaviyo.",
+  "key_signals": [
+    "Uses Klaviyo",
+    "Uses Shopify",
+    "Hiring Lifecycle Marketing Manager"
+  ],
+  "personalization_angles": [
+    "Mention lifecycle automation",
+    "Mention reducing manual CRM work",
+    "Mention improving visibility across email workflows"
+  ],
+  "risks_or_unknowns": [
+    "No confirmed revenue estimate",
+    "Klaviyo usage comes from website script detection only"
+  ],
+  "recommended_angle": "Position the product as a way to reduce manual lifecycle work without forcing a disruptive platform migration."
+}
+13.5 What this module should not do
+
+Do not:
+
+generate the actual email
+invent unsupported facts
+scrape too aggressively
+mark lead ready for outreach
+override scoring alone
+
+Its job is research, not final copy.
+
+13.6 Research brief structure
+
+Use this fixed format:
+
+1. Company snapshot
+2. Contact snapshot
+3. ICP fit
+4. Signals found
+5. Source evidence
+6. Recommended outreach angle
+7. Personalization notes
+8. Risks / missing data
+13.7 Source-backed rule
+
+Every important claim should come from:
+
+company_enrichment
+signals
+signal_evidence
+contact_enrichment
+knowledge_items
+
+Avoid unsupported claims like:
+
+“They are struggling with email automation”
+
+Better:
+
+“They may be relevant for email automation outreach because their website appears to use Klaviyo and the ICP targets competitor users.”
+13.8 Research evidence format
+
+Store evidence as JSON:
+
+[
+  {
+    "claim": "Company appears to use Klaviyo",
+    "source_type": "website_html",
+    "source_url": "https://brand.com",
+    "evidence_text": "Homepage HTML contains klaviyo.com script",
+    "confidence": 0.9
+  },
+  {
+    "claim": "Company is hiring lifecycle marketing role",
+    "source_type": "job_post",
+    "source_url": "https://brand.com/careers",
+    "evidence_text": "Lifecycle Marketing Manager",
+    "confidence": 0.8
+  }
+]
+13.9 AI prompt
+You are a B2B outbound research analyst.
+
+Your task is to create a compact research brief for one lead.
+
+Given:
+- ICP definition
+- company data
+- contact data
+- signals
+- signal evidence
+- relevant knowledge items
+- previous campaign learnings
+
+Return JSON only:
+{
+  "company_summary": "",
+  "contact_summary": "",
+  "why_relevant": "",
+  "key_signals": [],
+  "personalization_angles": [],
+  "recommended_angle": "",
+  "risks_or_unknowns": [],
+  "source_evidence": [],
+  "confidence_score": 0.0
+}
+
+Rules:
+- Do not invent facts.
+- Do not claim the company has a pain unless evidence supports it.
+- Use cautious wording when evidence is indirect.
+- Prefer specific signals over generic company descriptions.
+- Keep it concise.
+- Every personalization angle must be based on evidence or ICP logic.
+13.10 Research confidence score
+
+Score based on:
+
+company data completeness
+contact data completeness
+number of strong signals
+number of evidence sources
+signal confidence
+knowledge relevance
+
+Example:
+
+company summary exists: +15
+contact role exists: +15
+valid email exists: +10
+1 strong signal: +20
+2+ evidence sources: +20
+relevant knowledge item: +10
+recent data: +10
+
+Normalize to:
+
+0–100
+13.11 Research quality statuses
+unchecked
+passed
+needs_review
+failed
+
+Set to needs_review if:
+
+low confidence
+only weak signals
+source evidence missing
+contact role unclear
+company fit unclear
+
+Set to failed if:
+
+no company summary
+no usable signals
+AI output invalid
+13.12 Module architecture
+/backend/modules/ai_research_agent
+  module.py
+  contracts.py
+  context_builder.py
+  prompt_builder.py
+  research_generator.py
+  evidence_formatter.py
+  quality_checker.py
+  tests/
+13.13 Main flow
+1. Load qualified lead candidates
+2. Build research context
+3. Retrieve relevant knowledge
+4. Format source evidence
+5. Generate AI research brief
+6. Validate JSON
+7. Check hallucination risk
+8. Save lead_research
+9. Update lead_candidates.qualification_summary
+10. Log result
+13.14 Pseudocode
+class AIResearchAgentModule(PipelineModule):
+    name = "ai_research_agent"
+
+    def run(self, context):
+        leads = lead_repo.get_for_research(
+            project_id=context.project_id,
+            icp_id=context.icp_id,
+            limit=context.config.get("limit", 100)
+        )
+
+        created = 0
+        failed = 0
+
+        for lead in leads:
+            try:
+                research_context = context_builder.build(lead.id)
+
+                relevant_knowledge = knowledge_service.get_for_draft_generation(
+                    lead_candidate_id=lead.id
+                )
+
+                prompt = prompt_builder.build(
+                    lead=lead,
+                    research_context=research_context,
+                    knowledge=relevant_knowledge
+                )
+
+                result = ai_service.generate_json(prompt)
+
+                validated = research_validator.validate(result)
+
+                confidence = confidence_service.calculate(
+                    research_context,
+                    validated
+                )
+
+                quality_status = quality_checker.check(
+                    result=validated,
+                    evidence=research_context["evidence"],
+                    confidence=confidence
+                )
+
+                research_repo.create(
+                    lead_candidate_id=lead.id,
+                    company_summary=validated["company_summary"],
+                    contact_summary=validated["contact_summary"],
+                    why_relevant=validated["why_relevant"],
+                    key_signals=json.dumps(validated["key_signals"]),
+                    personalization_angles=json.dumps(validated["personalization_angles"]),
+                    risks_or_unknowns=json.dumps(validated["risks_or_unknowns"]),
+                    recommended_angle=validated["recommended_angle"],
+                    source_evidence=json.dumps(validated["source_evidence"]),
+                    confidence_score=confidence,
+                    quality_status=quality_status
+                )
+
+                lead_repo.update_qualification_summary(
+                    lead.id,
+                    validated["why_relevant"]
+                )
+
+                created += 1
+
+            except Exception as e:
+                failed += 1
+                log_error(e, lead.id)
+
+        return ModuleResult(
+            success=True,
+            input_count=len(leads),
+            output_count=created,
+            failed_count=failed
+        )
+13.15 Context builder
+
+The context builder should collect:
+
+company profile
+contact profile
+lead scores
+top signals
+signal evidence
+relevant knowledge
+ICP definition
+campaign learnings
+
+Example context:
+
+{
+  "company": {
+    "name": "Example Store",
+    "domain": "examplestore.com",
+    "industry": "DTC ecommerce",
+    "description": "Online skincare brand"
+  },
+  "contact": {
+    "name": "Sarah Miller",
+    "job_title": "Head of CRM",
+    "normalized_role": "crm_lead"
+  },
+  "scores": {
+    "final_score": 88,
+    "signal_score": 82,
+    "persona_fit_score": 95
+  },
+  "signals": [
+    {
+      "signal_name": "Uses Klaviyo",
+      "confidence_score": 0.93,
+      "evidence": [...]
+    }
+  ],
+  "knowledge": [
+    {
+      "type": "objection",
+      "summary": "Klaviyo users worry about migration effort."
+    }
+  ]
+}
+13.16 Hallucination guardrails
+
+Before saving research:
+
+check if recommended angle references evidence
+check if claims use cautious language when indirect
+check if source_evidence is not empty
+check if company/contact names match DB records
+reject unsupported strong claims
+
+Bad:
+
+“They are unhappy with Klaviyo.”
+
+Good:
+
+“They appear to use Klaviyo, so a relevant angle may be reducing manual lifecycle work without forcing a full platform switch.”
+13.17 Reuse existing research
+
+Do not regenerate every time.
+
+Rules:
+
+if valid research exists and lead data unchanged → reuse
+if new strong signal appears → regenerate
+if ICP changed → regenerate
+if draft failed because of weak personalization → regenerate
+
+Add optional fields later:
+
+ALTER TABLE lead_research ADD COLUMN context_hash TEXT;
+CREATE INDEX idx_lead_research_context_hash ON lead_research(context_hash);
+13.18 API endpoints
+Run research agent
+POST /api/research/run
+
+Body:
+
+{
+  "project_id": 1,
+  "icp_id": 1,
+  "limit": 100,
+  "force_refresh": false
+}
+Research one lead
+POST /api/leads/{lead_candidate_id}/research
+Get lead research
+GET /api/leads/{lead_candidate_id}/research
+Approve research
+POST /api/research/{research_id}/approve
+13.19 Frontend screens
+Research queue
+
+Columns:
+
+Company
+Contact
+Final score
+Top signal
+Research confidence
+Status
+Updated at
+
+Actions:
+
+generate
+regenerate
+view
+approve
+send to draft generation
+Research detail page
+
+Sections:
+
+Company snapshot
+Contact snapshot
+Why relevant
+Signals
+Evidence
+Recommended angle
+Risks / unknowns
+Knowledge used
+13.20 Config example
+{
+  "ai_research_agent": {
+    "enabled": true,
+    "limit": 100,
+    "force_refresh": false,
+    "min_lead_score": 65,
+    "min_signal_score": 30,
+    "require_signal_evidence": true,
+    "reuse_existing_research": true,
+    "ai_model": "gpt-4o-mini",
+    "prompt_version": "v1"
+  }
+}
+13.21 MVP build order
+Step 1
+
+Create lead_research table.
+
+Step 2
+
+Build context builder.
+
+Step 3
+
+Build evidence formatter.
+
+Step 4
+
+Build AI JSON prompt.
+
+Step 5
+
+Validate output.
+
+Step 6
+
+Save research brief.
+
+Step 7
+
+Show research in UI.
+
+Step 8
+
+Connect research to email draft generation.
+
+13.22 Definition of done
+
+This module is complete when:
+
+Qualified leads can receive a research brief
+Research uses company, contact, signals, evidence, and knowledge
+Every brief has source-backed personalization angles
+Unsupported claims are avoided
+Research has confidence and quality status
+Existing research is reused when still valid
+Email draft generation can consume the research brief

@@ -1,0 +1,553 @@
+17. Campaign feedback ingestion module
+17.1 Purpose
+
+Import campaign outcomes back into the system so it can learn.
+
+This module turns:
+
+sent emails, replies, bounces, unsubscribes, booked calls
+
+into structured feedback used by:
+
+suppression
+knowledge base
+ICP refinement
+scoring
+future draft generation
+17.2 Main goal
+
+After outreach happens, the system should know:
+
+Who was contacted?
+Who replied?
+Was the reply positive, negative, neutral?
+What objections came up?
+Which angle worked?
+Which leads should never be contacted again?
+What should change in the next campaign?
+17.3 Input sources
+MVP sources
+
+Start with:
+
+manual CSV import
+Instantly export CSV
+Smartlead export CSV
+manual reply paste
+Gmail/Outlook later
+Later sources
+Instantly API
+Smartlead API
+HeyReach API
+HubSpot
+Pipedrive
+Salesforce
+Google Calendar booked meetings
+Calendly/Cal.com
+Gmail replies
+Outlook replies
+Fireflies/Gong transcripts
+17.4 Output
+
+Writes to:
+
+campaigns
+campaign_events
+suppression_list
+knowledge_items
+module_logs
+
+Updates:
+
+lead_candidates.lead_status
+contacts.status
+contacts.email_status
+email_drafts
+17.5 Campaign event types
+
+Use standardized event types:
+
+sent
+delivered
+opened
+clicked
+replied
+positive_reply
+negative_reply
+neutral_reply
+not_now
+wrong_person
+referral
+meeting_booked
+bounced
+unsubscribed
+spam_complaint
+failed
+17.6 Campaign event table
+
+Current table is good:
+
+CREATE TABLE campaign_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    campaign_id INTEGER,
+    lead_candidate_id INTEGER,
+    contact_id INTEGER,
+
+    event_type TEXT NOT NULL,
+    event_value TEXT,
+
+    reply_text TEXT,
+    reply_sentiment TEXT,
+    reply_intent TEXT,
+
+    raw_data TEXT,
+
+    occurred_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
+    FOREIGN KEY (lead_candidate_id) REFERENCES lead_candidates(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+
+Recommended additions:
+
+ALTER TABLE campaign_events ADD COLUMN email TEXT;
+ALTER TABLE campaign_events ADD COLUMN external_event_id TEXT;
+ALTER TABLE campaign_events ADD COLUMN external_campaign_id TEXT;
+ALTER TABLE campaign_events ADD COLUMN provider TEXT;
+ALTER TABLE campaign_events ADD COLUMN processed INTEGER DEFAULT 0;
+
+Recommended unique index:
+
+CREATE UNIQUE INDEX idx_unique_campaign_event
+ON campaign_events(provider, external_event_id);
+
+For CSV imports where no event ID exists, create a hash:
+
+provider + email + event_type + occurred_at + reply_text_hash
+17.7 Campaign table
+CREATE TABLE campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    project_id INTEGER NOT NULL,
+    icp_id INTEGER,
+
+    name TEXT NOT NULL,
+    channel TEXT DEFAULT 'email',
+
+    provider TEXT,
+    external_campaign_id TEXT,
+
+    status TEXT DEFAULT 'active',
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (icp_id) REFERENCES icps(id)
+);
+
+Campaign statuses:
+
+draft
+active
+paused
+completed
+archived
+17.8 Provider architecture
+
+Use replaceable providers.
+
+class CampaignFeedbackProvider:
+    name: str
+
+    def fetch_events(self, campaign, config) -> list[dict]:
+        pass
+
+Example providers:
+
+CSVFeedbackProvider
+ManualFeedbackProvider
+InstantlyProvider
+SmartleadProvider
+HeyReachProvider
+GmailProvider
+OutlookProvider
+CalendarBookingProvider
+17.9 Module folder structure
+/backend/modules/campaign_feedback
+  module.py
+  contracts.py
+  normalizer.py
+  reply_classifier.py
+  event_mapper.py
+  suppression_handler.py
+  providers/
+    csv_provider.py
+    manual_provider.py
+    instantly_provider.py
+    smartlead_provider.py
+    heyreach_provider.py
+  prompts/
+    classify_reply.txt
+    extract_objections.txt
+  tests/
+17.10 Main flow
+1. Load campaign or import file
+2. Fetch raw feedback events
+3. Normalize provider-specific fields
+4. Match event to contact/lead
+5. Deduplicate event
+6. Save campaign event
+7. Classify replies
+8. Apply suppression for bounces/unsubscribes
+9. Update lead/contact statuses
+10. Send useful replies to knowledge base
+11. Log result
+17.11 Normalized event format
+
+Every provider should return this:
+
+{
+  "provider": "instantly",
+  "external_event_id": "evt_123",
+  "external_campaign_id": "camp_456",
+  "campaign_name": "Klaviyo displacement campaign",
+  "email": "sarah@example.com",
+  "event_type": "replied",
+  "reply_text": "Thanks, but we are already using Klaviyo and not looking to switch.",
+  "occurred_at": "2026-04-27T10:00:00Z",
+  "raw_data": {}
+}
+17.12 Matching events to leads
+
+Match in this order:
+
+1. lead_candidate_id if provided
+2. email
+3. contact_id if provided
+4. external system ID if stored
+5. company domain + contact name fallback
+
+Best MVP:
+
+match by email
+17.13 Event deduplication
+
+Avoid importing the same reply multiple times.
+
+Deduplicate by:
+
+provider
+external_event_id
+
+Fallback:
+
+provider + email + event_type + occurred_at + reply_text_hash
+17.14 Reply classification
+
+Replies should be classified into:
+
+positive
+negative
+neutral
+
+And intent:
+
+interested
+meeting_interest
+not_interested
+not_now
+wrong_person
+referral
+pricing_objection
+competitor_locked
+already_using_solution
+unsubscribe
+out_of_office
+question
+
+Example:
+
+“Can you send more details?”
+{
+  "reply_sentiment": "positive",
+  "reply_intent": "question"
+}
+
+Example:
+
+“Not interested, please remove me.”
+{
+  "reply_sentiment": "negative",
+  "reply_intent": "unsubscribe"
+}
+17.15 Reply classification prompt
+You classify cold outreach replies.
+
+Given:
+- original email draft
+- lead profile
+- reply text
+
+Return JSON only:
+{
+  "reply_sentiment": "positive|negative|neutral",
+  "reply_intent": "",
+  "summary": "",
+  "objections": [],
+  "competitors_mentioned": [],
+  "should_suppress": true/false,
+  "should_follow_up": true/false,
+  "suggested_next_action": ""
+}
+
+Rules:
+- If they ask to unsubscribe or stop contacting, should_suppress = true.
+- If bounce/unsubscribe, do not classify as sales objection.
+- Keep summary short.
+- Do not invent intent.
+17.16 Status updates
+Sent
+lead_candidates.lead_status = contacted
+contacts.status = contacted
+Positive reply
+lead_candidates.lead_status = replied
+contacts.status = replied
+Meeting booked
+lead_candidates.lead_status = meeting_booked
+Bounce
+contacts.email_status = invalid
+contacts.status = bounced
+lead_candidates.lead_status = bounced
+add email to suppression_list
+Unsubscribe
+contacts.status = unsubscribed
+lead_candidates.lead_status = unsubscribed
+add email to suppression_list
+Not interested
+lead_candidates.lead_status = not_interested
+17.17 Suppression handling
+
+Automatically suppress:
+
+unsubscribed
+spam_complaint
+hard bounce
+manual remove request
+
+Maybe suppress or cooldown:
+
+not interested
+wrong person
+not now
+
+Recommended:
+
+not interested → suppress contact
+not now → cooldown, not suppress forever
+wrong person → suppress contact, not company
+17.18 Knowledge base handoff
+
+Send useful events to knowledge base:
+
+positive replies
+negative replies with reasons
+objections
+competitor mentions
+questions
+meeting booked replies
+
+Do not send:
+
+opens
+clicks
+generic out-of-office
+delivery events
+empty bounces
+
+Create knowledge_items like:
+
+objection
+competitor_note
+winning_message
+reply_pattern
+persona_insight
+segment_insight
+17.19 Campaign summary
+
+After ingestion, generate summary:
+
+total sent
+replies
+positive replies
+negative replies
+meetings booked
+bounces
+unsubscribes
+top objections
+top competitors mentioned
+best-performing angle
+worst-performing angle
+
+Store as:
+
+knowledge_items.item_type = campaign_summary
+17.20 Config example
+{
+  "campaign_feedback": {
+    "enabled": true,
+    "providers": {
+      "csv": {
+        "enabled": true
+      },
+      "instantly": {
+        "enabled": false,
+        "api_key_env": "INSTANTLY_API_KEY"
+      },
+      "smartlead": {
+        "enabled": false,
+        "api_key_env": "SMARTLEAD_API_KEY"
+      }
+    },
+    "classify_replies": true,
+    "auto_suppress_unsubscribes": true,
+    "auto_suppress_bounces": true,
+    "send_to_knowledge_base": true
+  }
+}
+17.21 API endpoints
+Upload feedback CSV
+POST /api/campaign-feedback/upload
+Run feedback ingestion
+POST /api/campaign-feedback/run
+Classify one reply
+POST /api/campaign-feedback/classify-reply
+Get campaign events
+GET /api/campaigns/{campaign_id}/events
+Get campaign summary
+GET /api/campaigns/{campaign_id}/summary
+17.22 CSV import columns
+
+Minimum:
+
+email
+event_type
+occurred_at
+reply_text
+campaign_name
+
+Optional:
+
+lead_candidate_id
+contact_name
+company_name
+subject
+provider
+external_event_id
+
+Example:
+
+email,event_type,reply_text,occurred_at,campaign_name
+sarah@example.com,replied,"Can you send more details?",2026-04-27,Klaviyo campaign
+john@example.com,bounced,,2026-04-27,Klaviyo campaign
+17.23 Frontend screens
+Feedback import
+
+Fields:
+
+campaign
+provider
+CSV upload
+column mapping
+import preview
+Campaign events
+
+Columns:
+
+Contact
+Company
+Event
+Sentiment
+Intent
+Reply
+Occurred at
+Processed
+Reply review
+
+Actions:
+
+mark positive
+mark negative
+suppress contact
+create knowledge item
+create follow-up task
+Campaign learning dashboard
+
+Shows:
+
+positive replies
+negative replies
+top objections
+competitors mentioned
+bounce rate
+unsubscribe rate
+meetings booked
+suggested ICP changes
+17.24 MVP build order
+Step 1
+
+Create/update campaign event fields.
+
+Step 2
+
+Build campaigns CRUD.
+
+Step 3
+
+Build CSV feedback import.
+
+Step 4
+
+Match events by email.
+
+Step 5
+
+Save campaign events.
+
+Step 6
+
+Update lead/contact statuses.
+
+Step 7
+
+Auto-suppress bounces/unsubscribes.
+
+Step 8
+
+Add AI reply classification.
+
+Step 9
+
+Send classified insights to knowledge base.
+
+Step 10
+
+Build campaign summary dashboard.
+
+17.25 Definition of done
+
+This module is complete when:
+
+Campaign results can be imported
+Events are normalized
+Events are deduplicated
+Events match existing leads/contacts
+Replies are classified
+Bounces and unsubscribes suppress contacts
+Lead/contact statuses are updated
+Useful feedback enters the knowledge base
+Campaign summaries are generated
+Future campaigns can learn from previous outcomes
