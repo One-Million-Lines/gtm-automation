@@ -33,7 +33,7 @@ CORS_ORIGINS = [
     for o in (config.get("CORS_ORIGINS", "http://localhost:5320")).split(",")
     if o.strip()
 ]
-APP_PORT = int(config.get("APP_PORT", "5220"))
+APP_PORT = int(config.get("APP_PORT", "5214"))
 APP_HOST = config.get("APP_HOST", "0.0.0.0")
 APP_ENV = config.get("APP_ENV", "development")
 JWT_SECRET = config.get("JWT_SECRET", "dev_secret_change_me")

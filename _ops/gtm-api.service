@@ -11,7 +11,7 @@ Environment="PYTHONPATH=/opt/gtm-automation/backend"
 ExecStartPre=/opt/gtm-automation/backend/.venv/bin/python setup_database.py
 ExecStart=/opt/gtm-automation/backend/.venv/bin/uvicorn main:app \
     --host 127.0.0.1 \
-    --port 5220 \
+    --port 5214 \
     --workers 2 \
     --proxy-headers
 Restart=always

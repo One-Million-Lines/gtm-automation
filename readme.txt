@@ -24,9 +24,9 @@ wiring, deployment scaffolding) is done.
   cp .env.example .env             # edit values — see step 2
   python setup_database.py         # applies all migrations through 015
   export PYTHONPATH=$PYTHONPATH:.
-  uvicorn main:app --host 127.0.0.1 --port 5220 --reload
+  uvicorn main:app --host 127.0.0.1 --port 5214 --reload
 
-Backend on http://127.0.0.1:5220
+Backend on http://127.0.0.1:5214
   GET  /                  → service banner
   GET  /health            → {"ok": true, ...}
   GET  /docs              → OpenAPI Swagger UI
@@ -88,7 +88,64 @@ Optional:
 Frontend on http://localhost:5320
 
 --------------------------------------------------------------------------------
-4. END-TO-END SMOKE TEST IN BROWSER
+4. STARTING THE APP (DAY-TO-DAY)
+--------------------------------------------------------------------------------
+Every time you want to use the app, run BOTH of these in separate terminals:
+
+  Terminal 1 — backend:
+    cd gtm-automation/backend
+    source .venv/bin/activate
+    export PYTHONPATH=$PYTHONPATH:.
+    uvicorn main:app --host 127.0.0.1 --port 5214 --reload
+
+  Terminal 2 — frontend:
+    cd gtm-automation/frontend
+    npm run dev
+
+  Then open: http://localhost:5320
+
+  Verify the backend is healthy before trying to register:
+    curl http://127.0.0.1:5214/health
+    → {"ok": true, ...}
+
+--------------------------------------------------------------------------------
+5. REGISTER YOUR FIRST USER AND CREATE A PROJECT
+--------------------------------------------------------------------------------
+Step 1 — Register via the browser:
+  a. Open http://localhost:5320
+  b. You are redirected to /login → click "Don't have an account? Register"
+  c. Enter your full name, email, and a password (≥ 8 chars).
+  d. Click Register.
+     The FIRST user ever registered is automatically set to role=admin.
+  e. You land on the dashboard. Your initials + role appear top-right.
+
+Step 2 — (Optional) Register via curl instead of the browser:
+    curl -s -X POST http://127.0.0.1:5214/auth/register \
+      -H "Content-Type: application/json" \
+      -d '{"email":"you@example.com","password":"yourpassword","full_name":"Your Name"}' \
+      | python3 -m json.tool
+    # Copy the access_token from the response.
+
+Step 3 — Lock down registration after your account is created:
+  Edit backend/.env and set:
+    ALLOW_REGISTRATION=false
+  Then restart the backend. New self-registrations will return 403.
+
+Step 4 — Create your first project:
+  a. In the browser: click the project switcher (top-left) → "New project"
+     → type a name → Save. You are now inside project #1.
+  b. Or via curl (replace <token> with your access_token from step 2):
+       curl -s -X POST http://127.0.0.1:5214/projects \
+         -H "Authorization: Bearer <token>" \
+         -H "Content-Type: application/json" \
+         -d '{"name":"My GTM Project"}' | python3 -m json.tool
+
+Step 5 — Start the GTM workflow:
+  ICPs → Companies → Contacts → Signals → Leads → Outreach → Sends → Replies
+  Each step has a dedicated page in the left nav and a pipeline run type.
+
+--------------------------------------------------------------------------------
+6. END-TO-END SMOKE TEST IN BROWSER
 --------------------------------------------------------------------------------
   1. Open http://localhost:5320
   2. You will be redirected to /login then /register (no token yet)
@@ -107,18 +164,18 @@ If you set OPENAI_APIKEY, draft replies in the Inbox use the LLM adapter.
 Otherwise they fall back to the heuristic adapter.
 
 --------------------------------------------------------------------------------
-5. PRODUCTION DEPLOYMENT — option A (Docker Compose)
+7. PRODUCTION DEPLOYMENT — option A (Docker Compose)
 --------------------------------------------------------------------------------
   cd gtm-automation
   cp backend/.env.example backend/.env   # fill in real values, see step 2
   cd _ops
   docker compose up -d --build
 
-Frontend served on port 8080, backend on internal 5220.
+Frontend served on port 8080, backend on internal 5214.
 Put your own nginx + TLS in front of port 8080 if exposing publicly.
 
 --------------------------------------------------------------------------------
-6. PRODUCTION DEPLOYMENT — option B (systemd + nginx)
+8. PRODUCTION DEPLOYMENT — option B (systemd + nginx)
 --------------------------------------------------------------------------------
   # On the server (one-time):
   sudo mkdir -p /opt/gtm-automation /var/www/gtm-automation
@@ -144,7 +201,7 @@ Put your own nginx + TLS in front of port 8080 if exposing publicly.
   # nginx site file and reload nginx.
 
 --------------------------------------------------------------------------------
-7. SECURITY CHECKLIST
+9. SECURITY CHECKLIST
 --------------------------------------------------------------------------------
   [ ] JWT_SECRET set to a strong random value (NOT the default).
   [ ] ALLOW_REGISTRATION=false after the admin account is created.
@@ -157,7 +214,7 @@ Put your own nginx + TLS in front of port 8080 if exposing publicly.
   [ ] Rate limit RATE_LIMIT_PER_MINUTE tuned for your traffic.
 
 --------------------------------------------------------------------------------
-8. WHAT'S IMPLEMENTED IN THIS DELIVERY (File 24)
+10. WHAT'S IMPLEMENTED
 --------------------------------------------------------------------------------
   Backend
   -------
@@ -198,7 +255,7 @@ Put your own nginx + TLS in front of port 8080 if exposing publicly.
     * _ops/deploy.sh
 
 --------------------------------------------------------------------------------
-9. WHAT YOU STILL NEED TO PROVIDE / DO YOURSELF
+11. WHAT YOU STILL NEED TO PROVIDE / DO YOURSELF
 --------------------------------------------------------------------------------
   1. API keys — at minimum OPENAI_APIKEY in backend/.env for real LLM drafts.
   2. Email provider credentials (SMTP/SendGrid/Postmark) in backend/.env.

@@ -35,7 +35,7 @@ source .venv/bin/activate
 pip install -r pip_requirements.txt
 cp .env.example .env
 python setup_database.py
-python main.py            # http://localhost:5220
+python main.py            # http://localhost:5214
 ```
 
 ## Health

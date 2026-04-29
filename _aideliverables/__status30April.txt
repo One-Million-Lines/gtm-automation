@@ -1,0 +1,82 @@
+Part 2 — Project review: scope, status, gaps to full autonomy
+2.1 Project scope (recap)
+Self-hosted GTM/outbound automation system. End-to-end flow:
+
+ICP definition → company discovery & enrichment → contact discovery & enrichment → signal extraction → lead scoring → outreach generation → quality checks → send queue → reply ingestion & classification → multi-turn conversation drafting → experiments → exports → feedback → weight tuning
+
+Multi-tenant (users + project memberships + roles), gated by JWT, deployable via Docker or systemd.
+
+2.2 Implemented modules — inventory
+Backend API routers (all behind JWT except /health and /auth):
+auth, projects, icps, companies, contacts, enrichment, contact_enrichment, signals, leads, outreach, quality, sends, replies, conversations, experiments, exports, suppression, feedback, tuning, metrics, pipeline, orchestration, health — 23 routers, 133 routes.
+
+Pipeline modules (composable steps in pipeline/modules/):
+company_discovery, company_enrichment, contact_discovery, contact_enrichment, signal_extraction, lead_scoring, outreach_generation, quality_control, send, reply_tracking, multi_turn_drafter, suppression, experiment_scoring, engagement_metrics, feedback_ingestion, weight_tuning, export, full_pipeline — 18 modules.
+
+Service layer (services/): 31 services covering ICP, scoring, quality, sends, replies, classifier, signal provider (HTTP-real + fake), email sender (SMTP/SendGrid/Postmark/fake), reply ingestor (IMAP + webhook + fake), LLM factory, orchestrator with cron evaluator, weight tuner, etc.
+
+Frontend pages (frontend/src/pages/): 25 pages — Dashboard, ICPs, Companies, Contacts, Leads, LeadInbox, Outreach, Quality, Sends, Replies, DecisionTraces, Experiments+Detail, Exports+Detail, Feedback, Suppression, Templates, Schedules, Tuning, PipelineRuns, PipelineDashboard, Login/Register, Placeholder.
+
+Auth & ops: bcrypt+JWT, project-scoped membership, audit log, rate limiter, structured JSON logging, optional Sentry. Docker, docker-compose, host nginx, in-container nginx, systemd unit, deploy script, full readme.
+
+2.3 Automation gap analysis (per phase)
+Legend: ✅ automated · ⚙️ semi (HTTP endpoint exists; needs caller) · ✋ explicit human approval · ❌ manual / not implemented.
+
+Phase	Status	What's missing for "no manual touching"
+Project + ICP creation	✋	Acceptable manual step.
+Company discovery	⚙️	CSV ingestion + HttpSignalProvider exist; no real prospecting connector (Apollo/Clearbit/Crunchbase/LinkedIn). Currently a human supplies company lists.
+Company enrichment	✅	Website-fetch heuristics + repo of providers wired. Works automatically per pipeline run.
+Contact discovery	⚙️	CSV import works; no real connector to find emails (Hunter/Apollo/Dropcontact). Human supplies contact lists.
+Contact enrichment	✅	email_validator + heuristic confidence. Wired into pipeline.
+Signal extraction	✅	Wired; runs on schedule.
+Lead scoring	✅	lead_scorer runs in pipeline; weights revisable.
+Outreach generation	✅	LLMReplyAdapter (litellm) → real OpenAI when key set; falls back to heuristic.
+Quality check	✅	quality_checker runs automatically.
+Approval	✋	By design.
+Send queue	✅	send_service + per-day quota; SMTP/SendGrid/Postmark all wired via EMAIL_PROVIDER.
+Reply ingestion	⚙️	IMAPReplyIngestor and WebhookReplyIngestor classes exist but not wired in startup.py and no daemon polls IMAP. Today, replies must be POSTed to /replies/ingest by an external process.
+Reply classification	✅	LLMReplyClassifier installed at startup when LLM key present.
+Multi-turn drafter	✅	LLM-backed at startup. Drafts wait for approval before send.
+Experiments / variants	⚙️	experiment_service + variant_allocator work; no automated winner promotion — human must promote a winning variant.
+Exports	⚙️	Endpoints exist; no scheduled push to CRM (HubSpot/Salesforce).
+Feedback ingestion	✅	Pipeline module exists; events stored.
+Weight tuning	⚙️	weight_tuner_service exists; no scheduled rotation — runs only when triggered via API.
+Suppression	✋	Curated by admin; auto-adds on unsubscribe-classified replies.
+Bounce / complaint handling	❌	Send-side only; no inbound bounce parser, no SES/SNS webhook handler.
+Pipeline scheduling	⚙️	pipeline_schedules table + SimpleCronEvaluator + POST /pipeline/scheduler/tick endpoint exist, but nothing calls the tick on a clock. No worker / no system cron line.
+Daily digest emails	❌	Not implemented.
+Retries / DLQ for failed sends	❌	Send failures are recorded but not retried; no dead-letter queue.
+Multi-tenant RBAC in UI	⚙️	Backend roles (admin/owner/editor/viewer) enforced; UI shows role but does not yet grey out write actions for viewer, and no project-members management page.
+2.4 What's actually blocking "set it and forget it"
+These are the only items still requiring a human to touch the system on a regular cycle (excluding the deliberate approval step):
+
+Scheduler daemon. Add either:
+a tiny scheduler_worker.py that loops time.sleep(60) → calls orchestrator_service.scheduler_tick(repos, runner), plus a systemd unit gtm-scheduler.service; or
+a host crontab line: * * * * * curl -s -X POST -H "Authorization: Bearer $SVC_TOKEN" http://127.0.0.1:5214/pipeline/scheduler/tick.
+This is the single biggest gap — the orchestration is built but unattended.
+Wire reply pollers in startup.py. Mirror the email_sender pattern: read REPLY_INGESTOR=imap|webhook|fake env; if imap, install IMAPReplyIngestor and have the scheduler daemon call reply_service.poll(...) every N minutes.
+Real prospecting connectors. Pick one of Apollo / Clearbit / Hunter / Dropcontact, implement a CompanySource and a ContactSource adapter, and add them as pipeline-module configs. Without this, you must keep importing CSVs manually.
+Bounce / complaint webhook. Add /sends/webhook/{provider} for SendGrid/Postmark/SES events → mark sends bounced|complained, auto-add to suppression.
+Auto-promote A/B winners. Add a small loop in experiment_service (called by scheduler) that flips the chosen variant to is_default=true once statistical thresholds are met.
+Auto-rotate scoring weights. Schedule weight_tuner_service weekly; require an "apply" flag if you want a human gate.
+2.5 Recommended next steps (prioritized)
+Must-have for full autonomy (P0)
+
+Scheduler worker + systemd unit (1 file, ~40 lines).
+Wire IMAPReplyIngestor + scheduled reply poll.
+Bounce/complaint webhook handlers for the email provider you actually use.
+Strong nice-to-have (P1)
+4. One real prospecting connector (Apollo or Hunter).
+5. Auto-promote experiment winners.
+6. Scheduled weight tuning (weekly), gated behind an auto_apply=false flag if desired.
+7. Send retry + DLQ for transient SMTP/API failures.
+
+Polish (P2)
+8. Frontend role-aware affordances (hide/disable write controls for viewer).
+9. Project-members management UI page (invite, change role, remove).
+10. Daily digest email (replies-needing-attention, sends summary, scoring drift).
+11. CRM export connector (HubSpot or Salesforce).
+12. Frontend code-splitting (the build warns at 822 kB).
+
+After P0 lands, the only human responsibility during normal operation is approving generated outreach and curating the suppression list — exactly what you described as the acceptable manual surface.
+

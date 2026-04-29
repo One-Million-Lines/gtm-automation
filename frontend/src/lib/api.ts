@@ -2,7 +2,7 @@ import axios, { AxiosError } from "axios";
 
 const baseURL =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
-  "http://127.0.0.1:5220";
+  "http://127.0.0.1:5214";
 
 export const AUTH_TOKEN_KEY = "gtm.authToken";
 
