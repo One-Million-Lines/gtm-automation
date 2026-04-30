@@ -30,7 +30,7 @@ pipeline_runner = PipelineRunner(repos, vtlog)
 
 CORS_ORIGINS = [
     o.strip()
-    for o in (config.get("CORS_ORIGINS", "http://localhost:5320")).split(",")
+    for o in (config.get("CORS_ORIGINS", "http://localhost:5314")).split(",")
     if o.strip()
 ]
 APP_PORT = int(config.get("APP_PORT", "5214"))

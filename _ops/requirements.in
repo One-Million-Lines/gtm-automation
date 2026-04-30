@@ -1,0 +1,24 @@
+# GTM Automation backend – top-level dependencies
+# Compile with: pip-compile requirements.in -o requirements.txt
+# Install with: pip-sync requirements.txt
+
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic[email]
+python-multipart
+PyJWT
+bcrypt
+httpx
+beautifulsoup4
+lxml
+litellm
+aiosmtplib
+sentry-sdk[fastapi]
+
+
+
+
+# pip install pip-tools
+# pip-compile _ops/requirements.in -o _ops/pip_requirements.txt   # regenerate pins
+pip-sync _ops/pip_requirements.txt 

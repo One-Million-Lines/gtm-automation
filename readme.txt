@@ -75,7 +75,7 @@ just logs to the database without sending.
 Optional:
   SENTRY_DSN=https://...
   RATE_LIMIT_PER_MINUTE=120
-  CORS_ORIGINS=http://localhost:5320,https://gtm.example.com
+  CORS_ORIGINS=http://localhost:5314,https://gtm.example.com
 
 --------------------------------------------------------------------------------
 3. FRONTEND — first time setup
@@ -85,7 +85,7 @@ Optional:
   cp .env.example .env             # edit VITE_API_BASE if needed
   npm run dev
 
-Frontend on http://localhost:5320
+Frontend on http://localhost:5314
 
 --------------------------------------------------------------------------------
 4. STARTING THE APP (DAY-TO-DAY)
@@ -102,7 +102,7 @@ Every time you want to use the app, run BOTH of these in separate terminals:
     cd gtm-automation/frontend
     npm run dev
 
-  Then open: http://localhost:5320
+  Then open: http://localhost:5314
 
   Verify the backend is healthy before trying to register:
     curl http://127.0.0.1:5214/health
@@ -112,7 +112,7 @@ Every time you want to use the app, run BOTH of these in separate terminals:
 5. REGISTER YOUR FIRST USER AND CREATE A PROJECT
 --------------------------------------------------------------------------------
 Step 1 — Register via the browser:
-  a. Open http://localhost:5320
+  a. Open http://localhost:5314
   b. You are redirected to /login → click "Don't have an account? Register"
   c. Enter your full name, email, and a password (≥ 8 chars).
   d. Click Register.
@@ -147,7 +147,7 @@ Step 5 — Start the GTM workflow:
 --------------------------------------------------------------------------------
 6. END-TO-END SMOKE TEST IN BROWSER
 --------------------------------------------------------------------------------
-  1. Open http://localhost:5320
+  1. Open http://localhost:5314
   2. You will be redirected to /login then /register (no token yet)
   3. Register with any email + password ≥ 8 chars.
      The FIRST user is automatically promoted to role=admin.
