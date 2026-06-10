@@ -35,3 +35,4 @@ backend/**/__pycache__/
 # Python
 __pycache__/
 *.pyc
+prompt.txt
